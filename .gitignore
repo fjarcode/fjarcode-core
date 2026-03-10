@@ -1,0 +1,97 @@
+# Build artifacts
+*.o
+*.lo
+*.la
+*.a
+*.so
+*.dylib
+*.Po
+*.Plo
+*.deps/
+.dirstamp
+.libs/
+
+# Autotools generated
+Makefile
+!doc/man/Makefile.in
+!src/qt/Makefile
+!src/qt/test/Makefile
+!src/test/Makefile
+aclocal.m4
+autom4te.cache/
+config.log
+config.status
+configure
+libtool
+stamp-h1
+
+# Build directories
+src/Makefile
+src/config/fjarcode-config.h
+libfjarcodeconsensus.pc
+/build-linux-qt/
+/build-win64/
+/build/
+/release/
+
+# Compiled binaries
+src/fjarcoded
+src/fjarcode-cli
+src/fjarcode-tx
+src/fjarcode-util
+src/fjarcode-wallet
+src/fjarcode-qt
+src/qt/fjarcode-qt
+src/test/test_fjarcode
+src/test/fuzz/fuzz
+
+# Backup files
+*~
+*.bak
+*.orig
+*.original
+
+# IDE
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+*.user
+.qmake.stash
+
+# Python
+__pycache__/
+*.pyc
+
+# Test cache
+test/cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated release/package artifacts
+/fjarcode-*.exe
+/fjarcode-*.zip
+/fjarcode-*.tar.gz
+/fjarcode-*.sha256
+
+# Additional generated outputs
+src/test/test_fjarcode
+src/libfjarcode_*.a
+src/test/fuzz/fuzz
+build-*/
+!build-aux/
+depends/SDKs/
+depends/built/
+depends/sources/
+depends/arm64-apple-darwin/
+depends/aarch64-apple-darwin/
+depends/x86_64-apple-darwin/
+depends/x86_64-w64-mingw32/
+*.exe
+build_msvc/**/Debug/
+build_msvc/**/Release/
+build_msvc/**/x64/
+build_msvc/**/Win32/

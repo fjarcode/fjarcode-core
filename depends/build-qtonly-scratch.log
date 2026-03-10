@@ -1,0 +1,4 @@
+make: Entering directory '/root/fjarcode-core/depends'
+copying packages: boost libevent qt qrencode bdb sqlite miniupnpc libnatpmp zeromq
+to: /root/fjarcode-core/depends/x86_64-w64-mingw32
+make: Leaving directory '/root/fjarcode-core/depends'

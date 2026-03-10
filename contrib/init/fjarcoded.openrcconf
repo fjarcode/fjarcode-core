@@ -1,0 +1,33 @@
+# /etc/conf.d/fjarcoded: config file for /etc/init.d/fjarcoded
+
+# Config file location
+#CODEFALCOND_CONFIGFILE="/etc/codefalcon/bitcoin.conf"
+
+# What directory to write pidfile to?  (created and owned by $CODEFALCOND_USER)
+#CODEFALCOND_PIDDIR="/var/run/fjarcoded"
+
+# What filename to give the pidfile
+#CODEFALCOND_PIDFILE="${CODEFALCOND_PIDDIR}/fjarcoded.pid"
+
+# Where to write fjarcoded data (be mindful that the blockchain is large)
+#CODEFALCOND_DATADIR="/var/lib/fjarcoded"
+
+# User and group to own fjarcoded process
+#CODEFALCOND_USER="codefalcon"
+#CODEFALCOND_GROUP="codefalcon"
+
+# Path to fjarcoded executable
+#CODEFALCOND_BIN="/usr/bin/fjarcoded"
+
+# Nice value to run fjarcoded under
+#CODEFALCOND_NICE=0
+
+# Additional options (avoid -conf and -datadir, use flags above)
+#CODEFALCOND_OPTS=""
+
+# The timeout in seconds OpenRC will wait for fjarcoded to terminate
+# after a SIGTERM has been raised.
+# Note that this will be mapped as argument to start-stop-daemon's
+# '--retry' option, which means you can specify a retry schedule
+# here. For more information see man 8 start-stop-daemon.
+CODEFALCOND_SIGTERM_TIMEOUT=600

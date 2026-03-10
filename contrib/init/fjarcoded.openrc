@@ -1,0 +1,93 @@
+#!/sbin/openrc-run
+
+# backward compatibility for existing gentoo layout
+#
+if [ -d "/var/lib/codefalcon/.codefalcon" ]; then
+	CODEFALCOND_DEFAULT_DATADIR="/var/lib/codefalcon/.codefalcon"
+else
+	CODEFALCOND_DEFAULT_DATADIR="/var/lib/fjarcoded"
+fi
+
+CODEFALCOND_CONFIGFILE=${CODEFALCOND_CONFIGFILE:-/etc/codefalcon/bitcoin.conf}
+CODEFALCOND_PIDDIR=${CODEFALCOND_PIDDIR:-/var/run/fjarcoded}
+CODEFALCOND_PIDFILE=${CODEFALCOND_PIDFILE:-${CODEFALCOND_PIDDIR}/fjarcoded.pid}
+CODEFALCOND_DATADIR=${CODEFALCOND_DATADIR:-${CODEFALCOND_DEFAULT_DATADIR}}
+CODEFALCOND_USER=${CODEFALCOND_USER:-${CODEFALCON_USER:-codefalcon}}
+CODEFALCOND_GROUP=${CODEFALCOND_GROUP:-codefalcon}
+CODEFALCOND_BIN=${CODEFALCOND_BIN:-/usr/bin/fjarcoded}
+CODEFALCOND_NICE=${CODEFALCOND_NICE:-${NICELEVEL:-0}}
+CODEFALCOND_OPTS="${CODEFALCOND_OPTS:-${CODEFALCON_OPTS}}"
+
+name="FJARCODE Daemon"
+description="FJARCODE cryptocurrency P2P network daemon"
+
+command="/usr/bin/fjarcoded"
+command_args="-pid=\"${CODEFALCOND_PIDFILE}\" \
+		-conf=\"${CODEFALCOND_CONFIGFILE}\" \
+		-datadir=\"${CODEFALCOND_DATADIR}\" \
+		-daemon \
+		${CODEFALCOND_OPTS}"
+
+required_files="${CODEFALCOND_CONFIGFILE}"
+start_stop_daemon_args="-u ${CODEFALCOND_USER} \
+			-N ${CODEFALCOND_NICE} -w 2000"
+pidfile="${CODEFALCOND_PIDFILE}"
+
+# The retry schedule to use when stopping the daemon. Could be either
+# a timeout in seconds or multiple signal/timeout pairs (like
+# "SIGKILL/180 SIGTERM/300")
+retry="${CODEFALCOND_SIGTERM_TIMEOUT}"
+
+depend() {
+	need localmount net
+}
+
+# verify
+# 1) that the datadir exists and is writable (or create it)
+# 2) that a directory for the pid exists and is writable
+# 3) ownership and permissions on the config file
+start_pre() {
+	checkpath \
+	-d \
+	--mode 0750 \
+	--owner "${CODEFALCOND_USER}:${CODEFALCOND_GROUP}" \
+	"${CODEFALCOND_DATADIR}"
+
+	checkpath \
+	-d \
+	--mode 0755 \
+	--owner "${CODEFALCOND_USER}:${CODEFALCOND_GROUP}" \
+	"${CODEFALCOND_PIDDIR}"
+
+	checkpath -f \
+	-o "${CODEFALCOND_USER}:${CODEFALCOND_GROUP}" \
+	-m 0660 \
+	"${CODEFALCOND_CONFIGFILE}"
+
+	checkconfig || return 1
+}
+
+checkconfig()
+{
+	if grep -qs '^rpcuser=' "${CODEFALCOND_CONFIGFILE}" && \
+		! grep -qs '^rpcpassword=' "${CODEFALCOND_CONFIGFILE}" ; then
+		eerror ""
+		eerror "ERROR: You must set a secure rpcpassword to run fjarcoded."
+		eerror "The setting must appear in ${CODEFALCOND_CONFIGFILE}"
+		eerror ""
+		eerror "This password is security critical to securing wallets "
+		eerror "and must not be the same as the rpcuser setting."
+		eerror "You can generate a suitable random password using the following "
+		eerror "command from the shell:"
+		eerror ""
+		eerror "bash -c 'tr -dc a-zA-Z0-9 < /dev/urandom | head -c32 && echo'"
+		eerror ""
+		eerror "It is recommended that you also set alertnotify so you are "
+		eerror "notified of problems:"
+		eerror ""
+		eerror "ie: alertnotify=echo %%s | mail -s \"FJARCODE Alert\"" \
+			"admin@foo.com"
+		eerror ""
+		return 1
+	fi
+}

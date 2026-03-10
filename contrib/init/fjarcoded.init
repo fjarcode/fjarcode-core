@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+#
+#  fjarcoded The FJARCODE server.
+#
+#
+# chkconfig: 345 80 20
+# description: fjarcoded
+# processname: fjarcoded
+#
+
+# Source function library.
+. /etc/init.d/functions
+
+# you can override defaults in /etc/sysconfig/fjarcoded, see below
+if [ -f /etc/sysconfig/fjarcoded ]; then
+        . /etc/sysconfig/fjarcoded
+fi
+
+RETVAL=0
+
+prog=fjarcoded
+# you can override the lockfile via CODEFALCOND_LOCKFILE in /etc/sysconfig/fjarcoded
+lockfile=${CODEFALCOND_LOCKFILE-/var/lock/subsys/fjarcoded}
+
+# fjarcoded defaults to /usr/bin/fjarcoded, override with CODEFALCOND_BIN
+fjarcoded=${CODEFALCOND_BIN-/usr/bin/fjarcoded}
+
+# fjarcoded opts default to -disablewallet, override with CODEFALCOND_OPTS
+codefalcond_opts=${CODEFALCOND_OPTS--disablewallet}
+
+start() {
+    echo -n $"Starting $prog: "
+    daemon $DAEMONOPTS $fjarcoded $codefalcond_opts
+    RETVAL=$?
+    echo
+    [ $RETVAL -eq 0 ] && touch $lockfile
+    return $RETVAL
+}
+
+stop() {
+    echo -n $"Stopping $prog: "
+    killproc $prog -t600
+    RETVAL=$?
+    echo
+    [ $RETVAL -eq 0 ] && rm -f $lockfile
+    return $RETVAL
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    status)
+        status $prog
+        ;;
+    restart)
+        stop
+        start
+        ;;
+    *)
+        echo "Usage: service $prog {start|stop|status|restart}"
+        exit 1
+        ;;
+esac

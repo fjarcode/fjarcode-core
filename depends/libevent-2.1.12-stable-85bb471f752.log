@@ -1,0 +1,15 @@
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether build environment is sane... yes
+checking for aarch64-apple-darwin-strip... aarch64-apple-darwin-strip
+checking for a thread-safe mkdir -p... /usr/bin/mkdir -p
+checking for gawk... no
+checking for mawk... mawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking whether make supports nested variables... (cached) yes
+checking whether make supports the include directive... yes (GNU style)
+checking for aarch64-apple-darwin-gcc... env -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u OBJC_INCLUDE_PATH -u OBJCPLUS_INCLUDE_PATH -u CPATH -u LIBRARY_PATH /root/fjarcode-core/depends/aarch64-apple-darwin/native/bin/clang --target=aarch64-apple-darwin -B/root/fjarcode-core/depends/aarch64-apple-darwin/native/bin -isysroot/root/fjarcode-core/depends/SDKs/Xcode-15.0-15A240d-extracted-SDK-with-libcxx-headers -nostdlibinc -iwithsysroot/usr/include -iframeworkwithsysroot/System/Library/Frameworks
+checking whether the C compiler works... no
+configure: error: in `/root/fjarcode-core/depends/work/build/aarch64-apple-darwin/libevent/2.1.12-stable-85bb471f752':
+configure: error: C compiler cannot create executables
+See `config.log' for more details

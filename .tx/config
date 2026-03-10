@@ -1,0 +1,7 @@
+[main]
+host = https://www.transifex.com
+
+[o:fjarcode:p:fjarcode:r:qt-translation-027x]
+file_filter = src/qt/locale/fjarcode_<lang>.xlf
+source_file = src/qt/locale/fjarcode_en.xlf
+source_lang = en

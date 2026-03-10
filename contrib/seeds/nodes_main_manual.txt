@@ -1,0 +1,2 @@
+fjarcode.ddns.net:8338
+fjarcode.ddns.net:53
