@@ -1,8 +1,8 @@
 # FJARCODE (FJAR) Core
 
-**Version 27.0.0** | Mainnet P2P: 28439 | Mainnet RPC: 28442 | CashAddr: `fjarcode:`
+**Version 27.3.0** | Mainnet P2P: 28439 | Mainnet RPC: 28442 | CashAddr: `fjarcode:`
 
-FJARCODE (FJAR) is a SHA-256 cryptocurrency with FJARCODE consensus rules active from genesis, including 32 MB blocks, classic BCHN ASERT difficulty adjustment with the aserti3-2d 2-day half-life from genesis, CashAddr addressing, and SegWit disabled.
+FJARCODE (FJAR) is a cryptocurrency with FJARCODE consensus rules active from genesis, including 32 MB blocks, classic BCHN ASERT difficulty adjustment with the aserti3-2d 2-day half-life from genesis, CashAddr addressing, and SegWit disabled. The chain transitions proof-of-work from SHA-256 to SHA3-256T at block 22000.
 
 ---
 
@@ -13,7 +13,9 @@ FJARCODE (FJAR) is a SHA-256 cryptocurrency with FJARCODE consensus rules active
 3. [Download Pre-built Binaries](#download-pre-built-binaries)
 4. [Configuration](#configuration)
 5. [Network Information](#network-information)
-6. [License](#license)
+6. [Hard Fork Policy](#hard-fork-policy)
+7. [Release Packaging Notes](#release-packaging-notes)
+8. [License](#license)
 
 ---
 
@@ -24,6 +26,7 @@ FJARCODE (FJAR) is a SHA-256 cryptocurrency with FJARCODE consensus rules active
 | Block Size | 32 MB |
 | Block Time | 10 minutes |
 | Difficulty Adjustment | ASERT (aserti3-2d, 2-day half-life from genesis) |
+| PoW Algorithm | SHA-256 up to block 21999, SHA3-256T from block 22000 |
 | Address Format | CashAddr (`fjarcode:q...`) |
 | SegWit | Disabled |
 | Coin Symbol | FJAR |
@@ -48,7 +51,10 @@ FJARCODE (FJAR) is a SHA-256 cryptocurrency with FJARCODE consensus rules active
 
 ## Download Pre-built Binaries
 
-Download the latest release from: https://github.com/fjarcode/fjarcode-core/releases
+Download the latest release from:
+
+- https://fjarcode.com/downloads/
+- Archive of older releases: https://fjarcode.com/archive.php
 
 ---
 
@@ -144,6 +150,25 @@ maxmempool=300
 ```bash
 ./fjarcode-cli addnode "seed01.fjarcode.com:28439" "add"
 ```
+
+---
+
+## Hard Fork Policy
+
+- FJARCODE consensus rules are active from genesis on this chain.
+- Scheduled consensus hard fork: block 22000.
+- Consensus change at block 22000: PoW algorithm switches to SHA3-256T.
+- Nodes not upgraded for the block-22000 rules will follow an invalid chain after activation.
+- Operators should complete upgrades and validation before the network reaches block 22000.
+
+---
+
+## Release Packaging Notes
+
+- Windows GUI app is `fjarcode-qt.exe`; `fjarcoded.exe` and `fjarcode-cli.exe` are console apps and are not expected to open as GUI windows.
+- For Win64 Qt reliability, use a fresh Qt-only build profile with win32 MinGW and `CONFIG_SITE` from `depends` when needed.
+- After replacing any release artifact, always regenerate matching `.sha256` files and archive checksum files.
+- Keep `run-qt-debug.bat` in the downloads directory for field diagnostics if a user reports that the Qt EXE does not open.
 
 ---
 

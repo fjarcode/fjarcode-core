@@ -24,6 +24,8 @@
 class CBlockHeader
 {
 public:
+    static constexpr int32_t SHA3_VBIT = 1 << 12;
+
     // header
     int32_t nVersion;
     uint256 hashPrevBlock;
@@ -55,6 +57,8 @@ public:
     }
 
     uint256 GetHash() const;
+    uint256 GetSHA256dHash() const;
+    uint256 GetSHA3_256tHash() const;
 
     NodeSeconds Time() const
     {

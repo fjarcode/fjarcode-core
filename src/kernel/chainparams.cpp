@@ -29,6 +29,8 @@
 #include <cstring>
 #include <type_traits>
 
+static constexpr int32_t SHA3_VBIT = 1 << 12;
+
 static CBlock CreateGenesisBlock(const char* pszTimestamp, const CScript& genesisOutputScript, uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
 {
     CMutableTransaction txNew;
@@ -120,6 +122,9 @@ public:
 
         consensus.nRuleChangeActivationThreshold = 1815; // 90% of 2016
         consensus.nMinerConfirmationWindow = 2016; // nPowTargetTimespan / nPowTargetSpacing
+        consensus.SHA3Height = 22000;
+        consensus.nBitsSHA3Height = 0x1d00ffff;
+        consensus.SHA3VersionBit = SHA3_VBIT;
 
         // Taproot - DISABLED (requires SegWit which FJAR doesn't support)
         consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].bit = 2;
@@ -181,6 +186,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
 
         bech32_hrp = "bc";
+        cashaddr_prefix = "fjarcode";
 
         vFixedSeeds.clear();
 
@@ -259,6 +265,9 @@ public:
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1512; // 75% for testchains
         consensus.nMinerConfirmationWindow = 2016;
+        consensus.SHA3Height = 22000;
+        consensus.nBitsSHA3Height = 0x1d00ffff;
+        consensus.SHA3VersionBit = SHA3_VBIT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = Consensus::BIP9Deployment::NEVER_ACTIVE;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
@@ -303,6 +312,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
 
         bech32_hrp = "tb";
+        cashaddr_prefix = "fjarcodetest";
 
         vFixedSeeds.clear();
 
@@ -410,6 +420,9 @@ public:
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1815; // 90% of 2016
         consensus.nMinerConfirmationWindow = 2016;
+        consensus.SHA3Height = 22000;
+        consensus.nBitsSHA3Height = 0x1d00ffff;
+        consensus.SHA3VersionBit = SHA3_VBIT;
         consensus.MinBIP9WarningHeight = 0;
         consensus.powLimit = uint256S("00000377ae000000000000000000000000000000000000000000000000000000");
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
@@ -454,6 +467,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
 
         bech32_hrp = "tb";
+        cashaddr_prefix = "fjarcodetest";
 
         fDefaultConsistencyChecks = false;
         m_is_mockable_chain = false;
@@ -523,6 +537,9 @@ public:
         consensus.fPowNoRetargeting = true;
         consensus.nRuleChangeActivationThreshold = 108; // 75% for testchains
         consensus.nMinerConfirmationWindow = 144; // Faster than normal for regtest
+        consensus.SHA3Height = 2016;
+        consensus.nBitsSHA3Height = 0x1d00ffff;
+        consensus.SHA3VersionBit = SHA3_VBIT;
 
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = 0;
@@ -607,6 +624,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
 
         bech32_hrp = "bcrt";
+        cashaddr_prefix = "fjarcodereg";
     }
 };
 

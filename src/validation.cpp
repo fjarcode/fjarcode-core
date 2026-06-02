@@ -4533,6 +4533,13 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
                                  strprintf("rejected nVersion=0x%08x block", block.nVersion));
     }
 
+    if (nHeight >= consensusParams.SHA3Height && (block.nVersion & consensusParams.SHA3VersionBit) == 0) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-version-bits", "sha3 version bit not set");
+    }
+    if (nHeight < consensusParams.SHA3Height && (block.nVersion & consensusParams.SHA3VersionBit) != 0) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-version-bits", "sha3 version bit set before activation");
+    }
+
     return true;
 }
 

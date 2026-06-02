@@ -57,6 +57,40 @@ BOOST_AUTO_TEST_CASE(mainnet_fresh_chain_metadata)
     BOOST_CHECK_EQUAL(params->TxData().dTxRate, 0.0);
 }
 
+BOOST_AUTO_TEST_CASE(sha3_fork_parameters_match_network_plan)
+{
+    {
+        const auto params = CreateChainParams(ArgsManager{}, ChainType::MAIN);
+        const auto& consensus = params->GetConsensus();
+        BOOST_CHECK_EQUAL(consensus.SHA3Height, 22000);
+        BOOST_CHECK_EQUAL(consensus.nBitsSHA3Height, 0x1d00ffffu);
+        BOOST_CHECK_EQUAL(consensus.SHA3VersionBit, 1 << 12);
+    }
+
+    {
+        const auto params = CreateChainParams(ArgsManager{}, ChainType::TESTNET);
+        const auto& consensus = params->GetConsensus();
+        BOOST_CHECK_EQUAL(consensus.SHA3Height, 22000);
+        BOOST_CHECK_EQUAL(consensus.nBitsSHA3Height, 0x1d00ffffu);
+        BOOST_CHECK_EQUAL(consensus.SHA3VersionBit, 1 << 12);
+    }
+
+    {
+        const auto params = CreateChainParams(ArgsManager{}, ChainType::REGTEST);
+        const auto& consensus = params->GetConsensus();
+        BOOST_CHECK_EQUAL(consensus.SHA3Height, 2016);
+        BOOST_CHECK_EQUAL(consensus.nBitsSHA3Height, 0x1d00ffffu);
+        BOOST_CHECK_EQUAL(consensus.SHA3VersionBit, 1 << 12);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(cashaddr_prefixes_are_network_specific)
+{
+    BOOST_CHECK_EQUAL(CreateChainParams(ArgsManager{}, ChainType::MAIN)->CashAddrPrefix(), "fjarcode");
+    BOOST_CHECK_EQUAL(CreateChainParams(ArgsManager{}, ChainType::TESTNET)->CashAddrPrefix(), "fjarcodetest");
+    BOOST_CHECK_EQUAL(CreateChainParams(ArgsManager{}, ChainType::REGTEST)->CashAddrPrefix(), "fjarcodereg");
+}
+
 BOOST_AUTO_TEST_CASE(testnet_and_regtest_are_also_from_genesis)
 {
     for (ChainType chain_type : {ChainType::TESTNET, ChainType::REGTEST}) {

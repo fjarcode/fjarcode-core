@@ -71,6 +71,11 @@ test/cache/
 .DS_Store
 Thumbs.db
 
+# Local planning notes (do not publish)
+plan-sha3-256t.md
+contrib/ubuntu/
+doc/build-ubuntu-deb-qt.md
+
 # Generated release/package artifacts
 /fjarcode-*.exe
 /fjarcode-*.zip
@@ -90,7 +95,11 @@ depends/arm64-apple-darwin/
 depends/aarch64-apple-darwin/
 depends/x86_64-apple-darwin/
 depends/x86_64-w64-mingw32/
+depends/aarch64-linux-gnu/
+depends/x86_64-pc-linux-gnu/
 *.exe
+dist/
+dist-*/
 build_msvc/**/Debug/
 build_msvc/**/Release/
 build_msvc/**/x64/

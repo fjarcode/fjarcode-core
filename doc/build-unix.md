@@ -40,6 +40,8 @@ Finally, clang (often less resource hungry) can be used instead of gcc, which is
 
 ### Ubuntu & Debian
 
+For creating an installable Qt wallet `.deb` package (with launcher/icon included), see [build-ubuntu-deb-qt.md](build-ubuntu-deb-qt.md).
+
 #### Dependency Build Instructions
 
 Build requirements:

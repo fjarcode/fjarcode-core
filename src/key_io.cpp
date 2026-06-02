@@ -25,8 +25,6 @@
 static constexpr std::size_t BECH32_WITNESS_PROG_MAX_LEN = 40;
 
 namespace {
-constexpr std::string_view CASHADDR_PREFIX{"fjarcode"};
-
 template <typename Hash>
 std::string EncodeLegacyHash(const Hash& hash, const std::vector<unsigned char>& prefix)
 {
@@ -50,7 +48,7 @@ public:
         }
         std::vector<uint8_t> hash(id.begin(), id.end());
         std::vector<uint8_t> payload = cashaddr::PackAddrData(hash, 0); // type 0 = P2PKH
-        return cashaddr::Encode(std::string{CASHADDR_PREFIX}, payload);
+        return cashaddr::Encode(m_params.CashAddrPrefix(), payload);
     }
     std::string operator()(const ScriptHash& id) const
     {
@@ -59,7 +57,7 @@ public:
         }
         std::vector<uint8_t> hash(id.begin(), id.end());
         std::vector<uint8_t> payload = cashaddr::PackAddrData(hash, 1); // type 1 = P2SH
-        return cashaddr::Encode(std::string{CASHADDR_PREFIX}, payload);
+        return cashaddr::Encode(m_params.CashAddrPrefix(), payload);
     }
 
     std::string operator()(const WitnessV0KeyHash& id) const
@@ -109,7 +107,7 @@ CTxDestination DecodeDestination(const std::string& str, const CChainParams& par
     error_str = "";
 
     // Try CashAddr decoding first (fjarcode: prefix)
-    const std::string cashaddr_prefix{CASHADDR_PREFIX};
+    const std::string cashaddr_prefix{params.CashAddrPrefix()};
     bool is_cashaddr = (str.size() > cashaddr_prefix.size() + 1) && 
                        (ToLower(str.substr(0, cashaddr_prefix.size())) == cashaddr_prefix && str[cashaddr_prefix.size()] == ':');
     if (!is_cashaddr && str.find(':') == std::string::npos) {

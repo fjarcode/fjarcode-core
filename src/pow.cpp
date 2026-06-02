@@ -157,6 +157,14 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     // Check against the height being mined (pindexLast->nHeight + 1), not the parent
     // Skip ASERT for chains with no retargeting (regtest) - they keep constant difficulty
     int nNextHeight = pindexLast->nHeight + 1;
+
+    // Force a deterministic target at the SHA3 fork boundary (diff=1 by default).
+    if (nNextHeight == params.SHA3Height) {
+        arith_uint256 bnNew;
+        bnNew.SetCompact(params.nBitsSHA3Height);
+        return bnNew.GetCompact();
+    }
+
     if (params.IsASERTActive(nNextHeight) && params.asertAnchorParams && !params.fPowNoRetargeting) {
         // Get ASERT anchor parameters
         const int anchorHeight = params.asertAnchorParams->nHeight;

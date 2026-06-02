@@ -241,6 +241,17 @@ struct Params {
      */
     int maxReorgDepth{10};
 
+    /** SHA3-256t fork activation height.
+     *  If set to NEVER_ACTIVE_HEIGHT, SHA3 PoW is disabled.
+     */
+    int SHA3Height{NEVER_ACTIVE_HEIGHT};
+
+    /** nBits at SHA3 fork height (used to force diff=1 at boundary). */
+    uint32_t nBitsSHA3Height{0x1d00ffff};
+
+    /** Version bit required in post-fork blocks. */
+    int32_t SHA3VersionBit{1 << 12};
+
     // =========================================================================
     // End FJARCODE consensus activation parameters
     // =========================================================================
@@ -346,6 +357,11 @@ struct Params {
      *  Alias for IsAxionActive() for clarity in pow.cpp */
     bool IsASERTActive(int height) const {
         return IsAxionActive(height);
+    }
+
+    /** Check if SHA3 PoW is active at the given height. */
+    bool IsSHA3Active(int height) const {
+        return height >= SHA3Height;
     }
 
     /** Check if Upgrade 8 (native introspection, 64-bit integers) is active */

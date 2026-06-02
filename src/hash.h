@@ -13,6 +13,7 @@
 #include <crypto/common.h>
 #include <crypto/ripemd160.h>
 #include <crypto/sha256.h>
+#include <crypto/sha3.h>
 #include <prevector.h>
 #include <serialize.h>
 #include <span.h>
@@ -142,6 +143,38 @@ public:
 
     template <typename T>
     HashWriter& operator<<(const T& obj)
+    {
+        ::Serialize(*this, obj);
+        return *this;
+    }
+};
+
+/** A writer stream (for serialization) that computes SHA3-256t (triple SHA3-256). */
+class HashWriterSHA3_256t
+{
+private:
+    SHA3_256 ctx;
+
+public:
+    void write(Span<const std::byte> src)
+    {
+        ctx.Write({UCharCast(src.data()), src.size()});
+    }
+
+    /** Compute the SHA3-256t hash of all data written to this object.
+     *
+     * Invalidates this object.
+     */
+    uint256 GetHash() {
+        uint256 result;
+        ctx.Finalize({result.begin(), SHA3_256::OUTPUT_SIZE});
+        ctx.Reset().Write({result.begin(), SHA3_256::OUTPUT_SIZE}).Finalize({result.begin(), SHA3_256::OUTPUT_SIZE});
+        ctx.Reset().Write({result.begin(), SHA3_256::OUTPUT_SIZE}).Finalize({result.begin(), SHA3_256::OUTPUT_SIZE});
+        return result;
+    }
+
+    template <typename T>
+    HashWriterSHA3_256t& operator<<(const T& obj)
     {
         ::Serialize(*this, obj);
         return *this;
