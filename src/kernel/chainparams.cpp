@@ -122,7 +122,7 @@ public:
 
         consensus.nRuleChangeActivationThreshold = 1815; // 90% of 2016
         consensus.nMinerConfirmationWindow = 2016; // nPowTargetTimespan / nPowTargetSpacing
-        consensus.SHA3Height = 22000;
+        consensus.SHA3Height = 21000;
         consensus.nBitsSHA3Height = 0x1d00ffff;
         consensus.SHA3VersionBit = SHA3_VBIT;
 
@@ -144,6 +144,7 @@ public:
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60;
         consensus.nPowTargetSpacing = 10 * 60;
+        consensus.nPowTargetSpacingSHA3 = 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
 
@@ -261,11 +262,12 @@ public:
         consensus.powLimit = uint256S("00000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
+        consensus.nPowTargetSpacingSHA3 = 60;
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1512; // 75% for testchains
         consensus.nMinerConfirmationWindow = 2016;
-        consensus.SHA3Height = 22000;
+        consensus.SHA3Height = 21000;
         consensus.nBitsSHA3Height = 0x1d00ffff;
         consensus.SHA3VersionBit = SHA3_VBIT;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
@@ -416,11 +418,12 @@ public:
 
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
+        consensus.nPowTargetSpacingSHA3 = 60;
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
         consensus.nRuleChangeActivationThreshold = 1815; // 90% of 2016
         consensus.nMinerConfirmationWindow = 2016;
-        consensus.SHA3Height = 22000;
+        consensus.SHA3Height = 21000;
         consensus.nBitsSHA3Height = 0x1d00ffff;
         consensus.SHA3VersionBit = SHA3_VBIT;
         consensus.MinBIP9WarningHeight = 0;
@@ -533,6 +536,7 @@ public:
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
         consensus.nPowTargetSpacing = 10 * 60;
+        consensus.nPowTargetSpacingSHA3 = 60;
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = true;
         consensus.nRuleChangeActivationThreshold = 108; // 75% for testchains

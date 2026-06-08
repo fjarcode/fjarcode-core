@@ -157,6 +157,7 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     // Check against the height being mined (pindexLast->nHeight + 1), not the parent
     // Skip ASERT for chains with no retargeting (regtest) - they keep constant difficulty
     int nNextHeight = pindexLast->nHeight + 1;
+    const int64_t nTargetSpacing = params.GetPowTargetSpacing(nNextHeight);
 
     // Force a deterministic target at the SHA3 fork boundary (diff=1 by default).
     if (nNextHeight == params.SHA3Height) {
@@ -167,9 +168,22 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
 
     if (params.IsASERTActive(nNextHeight) && params.asertAnchorParams && !params.fPowNoRetargeting) {
         // Get ASERT anchor parameters
-        const int anchorHeight = params.asertAnchorParams->nHeight;
-        const uint32_t anchorBits = params.asertAnchorParams->nBits;
+        int anchorHeight = params.asertAnchorParams->nHeight;
+        uint32_t anchorBits = params.asertAnchorParams->nBits;
         int64_t anchorParentTime = params.asertAnchorParams->nPrevBlockTime;
+
+        // After the SHA3 fork boundary block is mined, use the boundary block as the
+        // ASERT reference so the 1-minute schedule starts cleanly from the fork.
+        if (params.IsSHA3Active(nNextHeight) && nNextHeight > params.SHA3Height) {
+            anchorHeight = params.SHA3Height;
+            anchorBits = params.nBitsSHA3Height;
+            const CBlockIndex* pForkParent = pindexLast->GetAncestor(anchorHeight - 1);
+            if (!pForkParent) {
+                LogPrintf("FJAR CRITICAL: SHA3 fork parent block not found at height %d, falling back to powLimit\n", anchorHeight - 1);
+                return nProofOfWorkLimit;
+            }
+            anchorParentTime = pForkParent->GetBlockTime();
+        }
 
         // If anchorParentTime is 0, dynamically get anchor's parent block timestamp
         // This is useful for regtest and as a fallback
@@ -218,7 +232,7 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
         // Half-life is fixed chain-wide via consensus parameters.
         arith_uint256 nextTarget = CalculateASERT(
             refTarget,
-            params.nPowTargetSpacing,  // 600 seconds
+            nTargetSpacing,
             nTimeDiff,
             nHeightDiff,
             UintToArith256(params.powLimit),
@@ -231,20 +245,21 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     // Fall back to Bitcoin's original difficulty adjustment when ASERT is inactive.
 
     // Only change once per difficulty adjustment interval
-    if ((pindexLast->nHeight+1) % params.DifficultyAdjustmentInterval() != 0)
+    const int64_t nDifficultyAdjustmentInterval = params.DifficultyAdjustmentInterval(nNextHeight);
+    if ((pindexLast->nHeight+1) % nDifficultyAdjustmentInterval != 0)
     {
         if (params.fPowAllowMinDifficultyBlocks)
         {
             // Special difficulty rule for testnet:
-            // If the new block's timestamp is more than 2* 10 minutes
+            // If the new block's timestamp is more than 2* target spacing
             // then allow mining of a min-difficulty block.
-            if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing*2)
+            if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + nTargetSpacing * 2)
                 return nProofOfWorkLimit;
             else
             {
                 // Return the last non-special-min-difficulty-rules-block
                 const CBlockIndex* pindex = pindexLast;
-                while (pindex->pprev && pindex->nHeight % params.DifficultyAdjustmentInterval() != 0 && pindex->nBits == nProofOfWorkLimit)
+                while (pindex->pprev && pindex->nHeight % nDifficultyAdjustmentInterval != 0 && pindex->nBits == nProofOfWorkLimit)
                     pindex = pindex->pprev;
                 return pindex->nBits;
             }
@@ -253,7 +268,7 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     }
 
     // Go back by what we want to be 14 days worth of blocks
-    int nHeightFirst = pindexLast->nHeight - (params.DifficultyAdjustmentInterval()-1);
+    int nHeightFirst = pindexLast->nHeight - (nDifficultyAdjustmentInterval - 1);
     assert(nHeightFirst >= 0);
     const CBlockIndex* pindexFirst = pindexLast->GetAncestor(nHeightFirst);
     assert(pindexFirst);

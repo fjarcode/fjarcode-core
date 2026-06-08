@@ -62,7 +62,8 @@ BOOST_AUTO_TEST_CASE(sha3_fork_parameters_match_network_plan)
     {
         const auto params = CreateChainParams(ArgsManager{}, ChainType::MAIN);
         const auto& consensus = params->GetConsensus();
-        BOOST_CHECK_EQUAL(consensus.SHA3Height, 22000);
+        BOOST_CHECK_EQUAL(consensus.SHA3Height, 21000);
+        BOOST_CHECK_EQUAL(consensus.nPowTargetSpacingSHA3, 60);
         BOOST_CHECK_EQUAL(consensus.nBitsSHA3Height, 0x1d00ffffu);
         BOOST_CHECK_EQUAL(consensus.SHA3VersionBit, 1 << 12);
     }
@@ -70,7 +71,8 @@ BOOST_AUTO_TEST_CASE(sha3_fork_parameters_match_network_plan)
     {
         const auto params = CreateChainParams(ArgsManager{}, ChainType::TESTNET);
         const auto& consensus = params->GetConsensus();
-        BOOST_CHECK_EQUAL(consensus.SHA3Height, 22000);
+        BOOST_CHECK_EQUAL(consensus.SHA3Height, 21000);
+        BOOST_CHECK_EQUAL(consensus.nPowTargetSpacingSHA3, 60);
         BOOST_CHECK_EQUAL(consensus.nBitsSHA3Height, 0x1d00ffffu);
         BOOST_CHECK_EQUAL(consensus.SHA3VersionBit, 1 << 12);
     }
@@ -79,6 +81,7 @@ BOOST_AUTO_TEST_CASE(sha3_fork_parameters_match_network_plan)
         const auto params = CreateChainParams(ArgsManager{}, ChainType::REGTEST);
         const auto& consensus = params->GetConsensus();
         BOOST_CHECK_EQUAL(consensus.SHA3Height, 2016);
+        BOOST_CHECK_EQUAL(consensus.nPowTargetSpacingSHA3, 60);
         BOOST_CHECK_EQUAL(consensus.nBitsSHA3Height, 0x1d00ffffu);
         BOOST_CHECK_EQUAL(consensus.SHA3VersionBit, 1 << 12);
     }

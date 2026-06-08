@@ -1,8 +1,8 @@
 # FJARCODE (FJAR) Core
 
-**Version 27.3.0** | Mainnet P2P: 28439 | Mainnet RPC: 28442 | CashAddr: `fjarcode:`
+**Version 27.4.0** | Mainnet P2P: 28439 | Mainnet RPC: 28442 | CashAddr: `fjarcode:`
 
-FJARCODE (FJAR) is a cryptocurrency with FJARCODE consensus rules active from genesis, including 32 MB blocks, classic BCHN ASERT difficulty adjustment with the aserti3-2d 2-day half-life from genesis, CashAddr addressing, and SegWit disabled. The chain transitions proof-of-work from SHA-256 to SHA3-256T at block 22000.
+FJARCODE (FJAR) is a cryptocurrency with FJARCODE consensus rules active from genesis, including 32 MB blocks, classic BCHN ASERT difficulty adjustment with the aserti3-2d 2-day half-life from genesis, CashAddr addressing, and SegWit disabled. The chain transitions proof-of-work from SHA-256 to SHA3-256T at block 21000 and moves to a 1-minute target block time from that height onward.
 
 ---
 
@@ -24,9 +24,9 @@ FJARCODE (FJAR) is a cryptocurrency with FJARCODE consensus rules active from ge
 | Feature | Value |
 |---------|-------|
 | Block Size | 32 MB |
-| Block Time | 10 minutes |
+| Block Time | 10 minutes before block 21000, 1 minute from block 21000 |
 | Difficulty Adjustment | ASERT (aserti3-2d, 2-day half-life from genesis) |
-| PoW Algorithm | SHA-256 up to block 21999, SHA3-256T from block 22000 |
+| PoW Algorithm | SHA-256 up to block 20999, SHA3-256T from block 21000 |
 | Address Format | CashAddr (`fjarcode:q...`) |
 | SegWit | Disabled |
 | Coin Symbol | FJAR |
@@ -156,10 +156,10 @@ maxmempool=300
 ## Hard Fork Policy
 
 - FJARCODE consensus rules are active from genesis on this chain.
-- Scheduled consensus hard fork: block 22000.
-- Consensus change at block 22000: PoW algorithm switches to SHA3-256T.
-- Nodes not upgraded for the block-22000 rules will follow an invalid chain after activation.
-- Operators should complete upgrades and validation before the network reaches block 22000.
+- Scheduled consensus hard fork: block 21000.
+- Consensus change at block 21000: PoW algorithm switches to SHA3-256T and target block time switches to 1 minute.
+- Nodes not upgraded for the block-21000 rules will follow an invalid chain after activation.
+- Operators should complete upgrades and validation before the network reaches block 21000.
 
 ---
 

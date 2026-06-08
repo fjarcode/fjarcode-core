@@ -272,12 +272,23 @@ struct Params {
     bool fPowAllowMinDifficultyBlocks;
     bool fPowNoRetargeting;
     int64_t nPowTargetSpacing;
+    /** Target spacing from SHA3 activation height onward (seconds). */
+    int64_t nPowTargetSpacingSHA3{60};
     int64_t nPowTargetTimespan;
     std::chrono::seconds PowTargetSpacing() const
     {
         return std::chrono::seconds{nPowTargetSpacing};
     }
+    int64_t GetPowTargetSpacing(int height) const
+    {
+        return IsSHA3Active(height) ? nPowTargetSpacingSHA3 : nPowTargetSpacing;
+    }
+    std::chrono::seconds PowTargetSpacing(int height) const
+    {
+        return std::chrono::seconds{GetPowTargetSpacing(height)};
+    }
     int64_t DifficultyAdjustmentInterval() const { return nPowTargetTimespan / nPowTargetSpacing; }
+    int64_t DifficultyAdjustmentInterval(int height) const { return nPowTargetTimespan / GetPowTargetSpacing(height); }
     /** The best chain should have at least this much work */
     uint256 nMinimumChainWork;
     /** By default assume that the signatures in ancestors of this block are valid */
