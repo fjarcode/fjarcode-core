@@ -55,7 +55,7 @@ class RpcCodeQuantumInfoTest(BitcoinTestFramework):
         mldsa_runtime_enabled = mldsa_runtime_match.group(1) == "true"
 
         if re.search(
-            r"MODE_V1_ACTIVE_ALGORITHMS\{\s*ALGORITHM_V1_WRAPPED_ECDSA_DER\s*,\s*ALGORITHM_V1_SHA3_256T\s*,\s*\};",
+            r"MODE_V1_ACTIVE_ALGORITHMS\{\s*ALGORITHM_V1_WRAPPED_ECDSA_DER\s*,\s*ALGORITHM_V1_SHA3_256T\s*,\s*ALGORITHM_V1_ML_DSA_65\s*,\s*\};",
             params,
             re.MULTILINE | re.DOTALL,
         ) is None:
@@ -68,7 +68,7 @@ class RpcCodeQuantumInfoTest(BitcoinTestFramework):
         assert_equal(info["algorithms"]["sha3_256t"], algorithm_sha3_256t)
         assert_equal(info["algorithms"]["mldsa_65"], algorithm_mldsa_65)
 
-        assert_equal(info["active_algorithms"], [algorithm_wrapped_ecdsa_der, algorithm_sha3_256t])
+        assert_equal(info["active_algorithms"], [algorithm_wrapped_ecdsa_der, algorithm_sha3_256t, algorithm_mldsa_65])
         assert_equal(info["capabilities"]["mldsa_65_runtime_enabled"], mldsa_runtime_enabled)
         assert_equal(
             info["capabilities"]["mldsa_65_verify_state"],

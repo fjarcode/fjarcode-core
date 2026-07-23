@@ -52,13 +52,13 @@ class CodeQuantumRuntimeContractTest(BitcoinTestFramework):
         )
         self.assert_match(
             params_text,
-            r"MODE_V1_ACTIVE_ALGORITHMS\{\s*ALGORITHM_V1_WRAPPED_ECDSA_DER\s*,\s*ALGORITHM_V1_SHA3_256T\s*,\s*\};",
-            "Active algorithm registry must include legacy + SHA3-256t IDs",
+            r"MODE_V1_ACTIVE_ALGORITHMS\{\s*ALGORITHM_V1_WRAPPED_ECDSA_DER\s*,\s*ALGORITHM_V1_SHA3_256T\s*,\s*ALGORITHM_V1_ML_DSA_65\s*,\s*\};",
+            "Active algorithm registry must include legacy + SHA3-256t + ML-DSA-65 IDs",
         )
         self.assert_match(
             params_text,
-            r"ML_DSA_65_RUNTIME_ENABLED\{\s*false\s*\}",
-            "ML_DSA_65_RUNTIME_ENABLED must remain false in emergency safe mode",
+            r"ML_DSA_65_RUNTIME_ENABLED\{\s*true\s*\}",
+            "ML_DSA_65_RUNTIME_ENABLED must remain true in emergency launch mode",
         )
 
         self.log.info("Checking interpreter aliases to canonical constants")
