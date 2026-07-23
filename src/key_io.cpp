@@ -6,6 +6,7 @@
 
 #include <base58.h>
 #include <bech32.h>
+#include <cashaddr.h>
 #include <script/interpreter.h>
 #include <script/solver.h>
 #include <tinyformat.h>
@@ -19,26 +20,45 @@
 static constexpr std::size_t BECH32_WITNESS_PROG_MAX_LEN = 40;
 
 namespace {
+static constexpr uint8_t CASHADDR_TYPE_P2PKH = 0;
+static constexpr uint8_t CASHADDR_TYPE_P2SH = 1;
+static constexpr uint8_t CASHADDR_TYPE_CODE_QUANTUM = 2;
+
+template <typename Hash>
+std::string EncodeLegacyHash(const Hash& hash, const std::vector<unsigned char>& prefix)
+{
+    std::vector<unsigned char> data = prefix;
+    data.insert(data.end(), hash.begin(), hash.end());
+    return EncodeBase58Check(data);
+}
+
 class DestinationEncoder
 {
 private:
     const CChainParams& m_params;
+    const AddressFormat m_format;
 
 public:
-    explicit DestinationEncoder(const CChainParams& params) : m_params(params) {}
+    explicit DestinationEncoder(const CChainParams& params, AddressFormat format) : m_params(params), m_format(format) {}
 
     std::string operator()(const PKHash& id) const
     {
-        std::vector<unsigned char> data = m_params.Base58Prefix(CChainParams::PUBKEY_ADDRESS);
-        data.insert(data.end(), id.begin(), id.end());
-        return EncodeBase58Check(data);
+        if (m_format == AddressFormat::LEGACY) {
+            return EncodeLegacyHash(id, m_params.Base58Prefix(CChainParams::PUBKEY_ADDRESS));
+        }
+        std::vector<uint8_t> hash(id.begin(), id.end());
+        std::vector<uint8_t> payload = cashaddr::PackAddrData(hash, CASHADDR_TYPE_P2PKH);
+        return payload.empty() ? std::string{} : cashaddr::Encode(m_params.CashAddrPrefix(), payload);
     }
 
     std::string operator()(const ScriptHash& id) const
     {
-        std::vector<unsigned char> data = m_params.Base58Prefix(CChainParams::SCRIPT_ADDRESS);
-        data.insert(data.end(), id.begin(), id.end());
-        return EncodeBase58Check(data);
+        if (m_format == AddressFormat::LEGACY) {
+            return EncodeLegacyHash(id, m_params.Base58Prefix(CChainParams::SCRIPT_ADDRESS));
+        }
+        std::vector<uint8_t> hash(id.begin(), id.end());
+        std::vector<uint8_t> payload = cashaddr::PackAddrData(hash, CASHADDR_TYPE_P2SH);
+        return payload.empty() ? std::string{} : cashaddr::Encode(m_params.CashAddrPrefix(), payload);
     }
 
     std::string operator()(const WitnessV0KeyHash& id) const
@@ -77,6 +97,16 @@ public:
         return bech32::Encode(bech32::Encoding::BECH32M, m_params.Bech32HRP(), data);
     }
 
+    std::string operator()(const QuantumHash& id) const
+    {
+        if (m_format == AddressFormat::LEGACY) {
+            return {};
+        }
+        std::vector<uint8_t> hash(id.begin(), id.end());
+        std::vector<uint8_t> payload = cashaddr::PackAddrData(hash, CASHADDR_TYPE_CODE_QUANTUM);
+        return payload.empty() ? std::string{} : cashaddr::Encode(m_params.CashAddrPrefix(), payload);
+    }
+
     std::string operator()(const CNoDestination& no) const { return {}; }
     std::string operator()(const PubKeyDestination& pk) const { return {}; }
 };
@@ -86,6 +116,41 @@ CTxDestination DecodeDestination(const std::string& str, const CChainParams& par
     std::vector<unsigned char> data;
     uint160 hash;
     error_str = "";
+
+    const std::string cashaddr_prefix{params.CashAddrPrefix()};
+    bool is_cashaddr = (str.size() > cashaddr_prefix.size() + 1) &&
+                       (ToLower(str.substr(0, cashaddr_prefix.size())) == cashaddr_prefix && str[cashaddr_prefix.size()] == ':');
+    if (!is_cashaddr && str.find(':') == std::string::npos) {
+        auto decoded = cashaddr::Decode(str, cashaddr_prefix);
+        if (!decoded.first.empty() && !decoded.second.empty()) {
+            is_cashaddr = true;
+        }
+    }
+    if (is_cashaddr || (str.find(':') != std::string::npos && ToLower(str.substr(0, str.find(':'))) == cashaddr_prefix)) {
+        auto decoded = cashaddr::Decode(str, cashaddr_prefix);
+        if (!decoded.first.empty() && !decoded.second.empty()) {
+            auto unpacked = cashaddr::UnpackAddrData(decoded.second);
+            const uint8_t type = unpacked.first;
+            const std::vector<uint8_t>& hash_data = unpacked.second;
+            if (hash_data.size() == 20) {
+                uint160 hash160;
+                std::copy(hash_data.begin(), hash_data.end(), hash160.begin());
+                if (type == CASHADDR_TYPE_P2PKH) {
+                    return PKHash(hash160);
+                }
+                if (type == CASHADDR_TYPE_P2SH) {
+                    return ScriptHash(hash160);
+                }
+            }
+            if (type == CASHADDR_TYPE_CODE_QUANTUM && hash_data.size() == 32) {
+                QuantumHash hash256;
+                std::copy(hash_data.begin(), hash_data.end(), hash256.begin());
+                return hash256;
+            }
+        }
+        error_str = "Invalid CashAddr address";
+        return CNoDestination();
+    }
 
     // Note this will be false if it is a valid Bech32 address for a different network
     bool is_bech32 = (ToLower(str.substr(0, params.Bech32HRP().size())) == params.Bech32HRP());
@@ -291,9 +356,19 @@ std::string EncodeExtKey(const CExtKey& key)
     return ret;
 }
 
+std::string EncodeDestination(const CTxDestination& dest, AddressFormat format)
+{
+    return std::visit(DestinationEncoder(Params(), format), dest);
+}
+
 std::string EncodeDestination(const CTxDestination& dest)
 {
-    return std::visit(DestinationEncoder(Params()), dest);
+    return EncodeDestination(dest, AddressFormat::CASHADDR);
+}
+
+std::string EncodeBase58Destination(const CTxDestination& dest)
+{
+    return EncodeDestination(dest, AddressFormat::LEGACY);
 }
 
 CTxDestination DecodeDestination(const std::string& str, std::string& error_msg, std::vector<int>* error_locations)

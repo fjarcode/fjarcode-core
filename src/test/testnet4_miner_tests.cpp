@@ -53,10 +53,10 @@ BOOST_AUTO_TEST_CASE(MiningInterface)
     auto should_be_nullptr = block_template->waitNext(wait_options);
     BOOST_REQUIRE(should_be_nullptr == nullptr);
 
-    // This remains the case when exactly 20 minutes have gone by
+    // This remains the case when exactly 2 minutes have gone by
     {
         LOCK(cs_main);
-        SetMockTime(m_node.chainman->ActiveChain().Tip()->GetBlockTime() + 20 * 60);
+        SetMockTime(m_node.chainman->ActiveChain().Tip()->GetBlockTime() + 2 * 60);
     }
     should_be_nullptr = block_template->waitNext(wait_options);
     BOOST_REQUIRE(should_be_nullptr == nullptr);
@@ -66,7 +66,7 @@ BOOST_AUTO_TEST_CASE(MiningInterface)
     // difficulty is already at 1.
     {
         LOCK(cs_main);
-        SetMockTime(m_node.chainman->ActiveChain().Tip()->GetBlockTime() + 20 * 60 + 1);
+        SetMockTime(m_node.chainman->ActiveChain().Tip()->GetBlockTime() + 2 * 60 + 1);
     }
     block_template = block_template->waitNext(wait_options);
     BOOST_REQUIRE(block_template);

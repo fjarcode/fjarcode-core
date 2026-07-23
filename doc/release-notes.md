@@ -40,6 +40,20 @@ unsupported systems.
 Notable changes
 ===============
 
+FJARCODE Code Quantum status
+----------------------------
+
+- `getcodequantuminfo` now serves as the canonical operator-facing capability surface for Code Quantum runtime and wallet signing state.
+- Capability reporting distinguishes verify and sign readiness explicitly:
+  - `capabilities.mldsa_65_verify_state`: `available` or `unavailable`
+  - `capabilities.code_quantum_signing_state`: `disabled`, `verify_only`, or `enabled`
+- Default release posture remains conservative for signing:
+  - wallet Code Quantum signing is default-off and requires explicit opt-in via `-enablecodequantumsigning=1`
+  - when the gate is enabled but signer backend is unavailable, runtime remains `verify_only`
+- Operator diagnostics and rollout guardrails for this state model are documented in:
+  - `README.md` (Code Quantum and ML-DSA-65 section)
+  - `doc/code_quantum_mldsa_hardfork_activation_runbook.md`
+
 Policy
 ------
 

@@ -85,6 +85,13 @@ struct WitnessV0KeyHash : public BaseHash<uint160>
 };
 CKeyID ToKeyID(const WitnessV0KeyHash& key_hash);
 
+// 32-byte hash destination used by Code Quantum script template (P2SH32/OP_HASH256).
+struct QuantumHash : public BaseHash<uint256>
+{
+    QuantumHash() : BaseHash() {}
+    explicit QuantumHash(const uint256& hash) : BaseHash(hash) {}
+};
+
 struct WitnessV1Taproot : public XOnlyPubKey
 {
     WitnessV1Taproot() : XOnlyPubKey() {}
@@ -138,12 +145,16 @@ struct PayToAnchor : public WitnessUnknown
  *  * WitnessV1Taproot: TxoutType::WITNESS_V1_TAPROOT destination (P2TR address)
  *  * PayToAnchor: TxoutType::ANCHOR destination (P2A address)
  *  * WitnessUnknown: TxoutType::WITNESS_UNKNOWN destination (P2W??? address)
+ *  * QuantumHash: TxoutType::SCRIPTHASH32 destination (Code Quantum hash256 address)
  *  A CTxDestination is the internal data type encoded in a bitcoin address
  */
-using CTxDestination = std::variant<CNoDestination, PubKeyDestination, PKHash, ScriptHash, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessV1Taproot, PayToAnchor, WitnessUnknown>;
+using CTxDestination = std::variant<CNoDestination, PubKeyDestination, PKHash, ScriptHash, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessV1Taproot, PayToAnchor, WitnessUnknown, QuantumHash>;
 
 /** Check whether a CTxDestination corresponds to one with an address. */
 bool IsValidDestination(const CTxDestination& dest);
+
+/** Check whether a destination is witness-type (SegWit) encoded. */
+bool IsWitnessDestination(const CTxDestination& dest);
 
 /**
  * Parse a scriptPubKey for the destination.

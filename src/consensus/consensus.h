@@ -9,16 +9,26 @@
 #include <cstdint>
 #include <cstdlib>
 
+static const unsigned int FJARCODE_MAX_BLOCK_SIZE = 32000000;
+static const unsigned int PRE_FJARCODE_MAX_BLOCK_SIZE = 4000000;
+
+/** Default consensus block size for ABLA initialization (32MB). */
+inline constexpr uint64_t DEFAULT_CONSENSUS_BLOCK_SIZE = 32000000;
+/** Maximum consensus block size (2GB) - ABLA hard cap. */
+inline constexpr uint64_t MAX_CONSENSUS_BLOCK_SIZE = 2000000000;
+
 /** The maximum allowed size for a serialized block, in bytes (only for buffer size limits) */
-static const unsigned int MAX_BLOCK_SERIALIZED_SIZE = 4000000;
-/** The maximum allowed weight for a block, see BIP 141 (network rule) */
-static const unsigned int MAX_BLOCK_WEIGHT = 4000000;
+static const unsigned int MAX_BLOCK_SERIALIZED_SIZE = FJARCODE_MAX_BLOCK_SIZE;
+/** The maximum allowed weight for a block (network rule) */
+static const unsigned int MAX_BLOCK_WEIGHT = FJARCODE_MAX_BLOCK_SIZE;
+static const int64_t FJARCODE_MAX_BLOCK_SIGOPS_COST = 640000;
+static const int64_t PRE_FJARCODE_MAX_BLOCK_SIGOPS_COST = 80000;
 /** The maximum allowed number of signature check operations in a block (network rule) */
-static const int64_t MAX_BLOCK_SIGOPS_COST = 80000;
+static const int64_t MAX_BLOCK_SIGOPS_COST = FJARCODE_MAX_BLOCK_SIGOPS_COST;
 /** Coinbase transaction outputs can only be spent after this number of new blocks (network rule) */
 static const int COINBASE_MATURITY = 100;
 
-static const int WITNESS_SCALE_FACTOR = 4;
+static const int WITNESS_SCALE_FACTOR = 1;
 
 static const size_t MIN_TRANSACTION_WEIGHT = WITNESS_SCALE_FACTOR * 60; // 60 is the lower bound for the size of a valid serialized CTransaction
 static const size_t MIN_SERIALIZABLE_TRANSACTION_WEIGHT = WITNESS_SCALE_FACTOR * 10; // 10 is the lower bound for the size of a serialized CTransaction

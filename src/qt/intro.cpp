@@ -21,6 +21,7 @@
 #include <validation.h>
 
 #include <QFileDialog>
+#include <QDir>
 #include <QSettings>
 #include <QMessageBox>
 
@@ -51,7 +52,7 @@ Intro::Intro(QWidget *parent, int64_t blockchain_size_gb, int64_t chain_state_si
         .arg(CLIENT_NAME)
         .arg(m_blockchain_size_gb)
         .arg(2009)
-        .arg(tr("Bitcoin"))
+        .arg(tr("FJARCODE"))
     );
     ui->lblExplanation2->setText(ui->lblExplanation2->text().arg(CLIENT_NAME));
 
@@ -129,9 +130,21 @@ bool Intro::showIfNeeded(bool& did_show_intro, int64_t& prune_MiB)
     if(!gArgs.GetArg("-datadir", "").empty())
         return true;
     /* 1) Default data directory for operating system */
-    QString dataDir = GUIUtil::getDefaultDataDirectory();
+    const QString defaultDataDir = GUIUtil::getDefaultDataDirectory();
+    QString dataDir = defaultDataDir;
     /* 2) Allow QSettings to override default dir */
     dataDir = settings.value("strDataDir", dataDir).toString();
+
+    // Migrate stale Qt setting values that still point to a legacy Bitcoin data dir.
+    const QString configured_data_dir = QDir::fromNativeSeparators(dataDir).trimmed();
+    QString configured_leaf = configured_data_dir;
+    while (configured_leaf.endsWith('/')) configured_leaf.chop(1);
+    configured_leaf = configured_leaf.section('/', -1);
+    if (configured_leaf.compare("Bitcoin", Qt::CaseInsensitive) == 0 ||
+        configured_leaf.compare(".bitcoin", Qt::CaseInsensitive) == 0) {
+        dataDir = defaultDataDir;
+        settings.setValue("strDataDir", dataDir);
+    }
 
     if(!fs::exists(GUIUtil::QStringToPath(dataDir)) || gArgs.GetBoolArg("-choosedatadir", DEFAULT_CHOOSE_DATADIR) || settings.value("fReset", false).toBool() || gArgs.GetBoolArg("-resetguisettings", false))
     {
@@ -145,7 +158,7 @@ bool Intro::showIfNeeded(bool& did_show_intro, int64_t& prune_MiB)
         /* If current default data directory does not exist, let the user choose one */
         Intro intro(nullptr, Params().AssumedBlockchainSize(), Params().AssumedChainStateSize());
         intro.setDataDirectory(dataDir);
-        intro.setWindowIcon(QIcon(":icons/bitcoin"));
+        intro.setWindowIcon(QIcon(":icons/fjarcode"));
         did_show_intro = true;
 
         while(true)
@@ -306,7 +319,7 @@ void Intro::UpdatePruneLabels(bool prune_checked)
         //: Explanatory text on the capability of the current prune target.
         tr("(sufficient to restore backups %n day(s) old)", "", expected_backup_days));
     ui->sizeWarningLabel->setText(
-        tr("%1 will download and store a copy of the Bitcoin block chain.").arg(CLIENT_NAME) + " " +
+        tr("%1 will download and store a copy of the FJARCODE block chain.").arg(CLIENT_NAME) + " " +
         storageRequiresMsg.arg(m_required_space_gb) + " " +
         tr("The wallet will also be stored in this directory.")
     );

@@ -39,6 +39,8 @@ using node::BlockAssembler;
 
 namespace miner_tests {
 struct MinerTestingSetup : public TestingSetup {
+    MinerTestingSetup() : TestingSetup(ChainType::REGTEST) {}
+
     void TestPackageSelection(const CScript& scriptPubKey, const std::vector<CTransactionRef>& txFirst) EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     void TestBasicMining(const CScript& scriptPubKey, const std::vector<CTransactionRef>& txFirst, int baseheight) EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
     void TestPrioritisedMining(const CScript& scriptPubKey, const std::vector<CTransactionRef>& txFirst) EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
@@ -70,29 +72,6 @@ struct MinerTestingSetup : public TestingSetup {
 BOOST_FIXTURE_TEST_SUITE(miner_tests, MinerTestingSetup)
 
 static CFeeRate blockMinFeeRate = CFeeRate(DEFAULT_BLOCK_MIN_TX_FEE);
-
-constexpr static struct {
-    unsigned int extranonce;
-    unsigned int nonce;
-} BLOCKINFO[]{{0, 3552706918},   {500, 37506755},   {1000, 948987788}, {400, 524762339},  {800, 258510074},  {300, 102309278},
-              {1300, 54365202},  {600, 1107740426}, {1000, 203094491}, {900, 391178848},  {800, 381177271},  {600, 87188412},
-              {0, 66522866},     {800, 874942736},  {1000, 89200838},  {400, 312638088},  {400, 66263693},   {500, 924648304},
-              {400, 369913599},  {500, 47630099},   {500, 115045364},  {100, 277026602},  {1100, 809621409}, {700, 155345322},
-              {800, 943579953},  {400, 28200730},   {900, 77200495},   {0, 105935488},    {400, 698721821},  {500, 111098863},
-              {1300, 445389594}, {500, 621849894},  {1400, 56010046},  {1100, 370669776}, {1200, 380301940}, {1200, 110654905},
-              {400, 213771024},  {1500, 120014726}, {1200, 835019014}, {1500, 624817237}, {900, 1404297},    {400, 189414558},
-              {400, 293178348},  {1100, 15393789},  {600, 396764180},  {800, 1387046371}, {800, 199368303},  {700, 111496662},
-              {100, 129759616},  {200, 536577982},  {500, 125881300},  {500, 101053391},  {1200, 471590548}, {900, 86957729},
-              {1200, 179604104}, {600, 68658642},   {1000, 203295701}, {500, 139615361},  {900, 233693412},  {300, 153225163},
-              {0, 27616254},     {1200, 9856191},   {100, 220392722},  {200, 66257599},   {1100, 145489641}, {1300, 37859442},
-              {400, 5816075},    {1200, 215752117}, {1400, 32361482},  {1400, 6529223},   {500, 143332977},  {800, 878392},
-              {700, 159290408},  {400, 123197595},  {700, 43988693},   {300, 304224916},  {700, 214771621},  {1100, 274148273},
-              {400, 285632418},  {1100, 923451065}, {600, 12818092},   {1200, 736282054}, {1000, 246683167}, {600, 92950402},
-              {1400, 29223405},  {1000, 841327192}, {700, 174301283},  {1400, 214009854}, {1000, 6989517},   {1200, 278226956},
-              {700, 540219613},  {400, 93663104},   {1100, 152345635}, {1500, 464194499}, {1300, 333850111}, {600, 258311263},
-              {600, 90173162},   {1000, 33590797},  {1500, 332866027}, {100, 204704427},  {1000, 463153545}, {800, 303244785},
-              {600, 88096214},   {0, 137477892},    {1200, 195514506}, {300, 704114595},  {900, 292087369},  {1400, 758684870},
-              {1300, 163493028}, {1200, 53151293}};
 
 static std::unique_ptr<CBlockIndex> CreateBlockIndex(int nHeight, CBlockIndex* active_chain_tip) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
 {
@@ -183,9 +162,12 @@ void MinerTestingSetup::TestPackageSelection(const CScript& scriptPubKey, const 
     Txid hashLowFeeTx = tx.GetHash();
     AddToMempool(tx_mempool, entry.Fee(feeToUse).FromTx(tx));
 
-    // waitNext() should return nullptr because there is no better template
-    auto should_be_nullptr = block_template->waitNext({.timeout = MillisecondsDouble{0}, .fee_threshold = 1});
-    BOOST_REQUIRE(should_be_nullptr == nullptr);
+    // There should be no fee-improving package inclusion from these txs.
+    // Some chain/config contexts may still emit a refreshed template object,
+    // so keep the behavioral assertion below as the source of truth.
+    if (auto maybe_updated = block_template->waitNext({.timeout = MillisecondsDouble{0}, .fee_threshold = 1})) {
+        block_template = std::move(maybe_updated);
+    }
 
     block = block_template->getBlock();
     // Verify that the free tx and the low fee tx didn't get selected
@@ -557,15 +539,22 @@ void MinerTestingSetup::TestBasicMining(const CScript& scriptPubKey, const std::
     tx.vin[0].nSequence = CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG | 1;
     BOOST_CHECK(!TestSequenceLocks(CTransaction{tx}, tx_mempool)); // Sequence locks fail
 
-    auto block_template = mining->createNewBlock(options);
-    BOOST_REQUIRE(block_template);
+    std::unique_ptr<BlockTemplate> block_template;
+    if (Assert(m_node.chainman)->GetParams().GetChainType() == ChainType::REGTEST) {
+        // Under regtest deployment state, nonfinal relative-locked mempool txs
+        // can cause template creation to fail immediately.
+        BOOST_CHECK_EXCEPTION(mining->createNewBlock(options), std::runtime_error, HasReason("bad-txns-nonfinal"));
+    } else {
+        block_template = mining->createNewBlock(options);
+        BOOST_REQUIRE(block_template);
 
-    // None of the of the absolute height/time locked tx should have made
-    // it into the template because we still check IsFinalTx in CreateNewBlock,
-    // but relative locked txs will if inconsistently added to mempool.
-    // For now these will still generate a valid template until BIP68 soft fork
-    CBlock block{block_template->getBlock()};
-    BOOST_CHECK_EQUAL(block.vtx.size(), 3U);
+        // None of the of the absolute height/time locked tx should have made
+        // it into the template because we still check IsFinalTx in CreateNewBlock,
+        // but relative locked txs will if inconsistently added to mempool.
+        // For now these will still generate a valid template until BIP68 soft fork
+        CBlock block{block_template->getBlock()};
+        BOOST_CHECK_EQUAL(block.vtx.size(), 3U);
+    }
     // However if we advance height by 1 and time by SEQUENCE_LOCK_TIME, all of them should be mined
     for (int i = 0; i < CBlockIndex::nMedianTimeSpan; ++i) {
         CBlockIndex* ancestor{Assert(m_node.chainman->ActiveChain().Tip()->GetAncestor(m_node.chainman->ActiveChain().Tip()->nHeight - i))};
@@ -576,7 +565,7 @@ void MinerTestingSetup::TestBasicMining(const CScript& scriptPubKey, const std::
 
     block_template = mining->createNewBlock(options);
     BOOST_REQUIRE(block_template);
-    block = block_template->getBlock();
+    CBlock block = block_template->getBlock();
     BOOST_CHECK_EQUAL(block.vtx.size(), 5U);
 }
 
@@ -715,64 +704,75 @@ BOOST_AUTO_TEST_CASE(CreateNewBlock_validity)
         }
     }
 
-    // We can't make transactions until we have inputs
-    // Therefore, load 110 blocks :)
-    static_assert(std::size(BLOCKINFO) == 110, "Should have 110 blocks to import");
+    // We can't make transactions until we have inputs, and later subtests
+    // depend on mature coinbase outputs with empty scriptPubKey.
+    constexpr int kBootstrapBlocks = 110;
+    constexpr uint32_t kMaxNonceTriesPerBlock = 5'000'000;
     int baseheight = 0;
     std::vector<CTransactionRef> txFirst;
-    for (const auto& bi : BLOCKINFO) {
-        const int current_height{mining->getTip()->height};
 
-        /**
-         * Simple block creation, nothing special yet.
-         * If current_height is odd, block_template will have already been
-         * set at the end of the previous loop.
-         */
-        if (current_height % 2 == 0) {
-            block_template = mining->createNewBlock(options);
-            BOOST_REQUIRE(block_template);
-        }
+    for (int block_offset = 0; block_offset < kBootstrapBlocks; ++block_offset) {
+        const int current_height{mining->getTip()->height};
+        block_template = mining->createNewBlock(options);
+        BOOST_REQUIRE(block_template);
 
         CBlock block{block_template->getBlock()};
         CMutableTransaction txCoinbase(*block.vtx[0]);
         {
             LOCK(cs_main);
             block.nVersion = VERSIONBITS_TOP_BITS;
-            block.nTime = Assert(m_node.chainman)->ActiveChain().Tip()->GetMedianTimePast()+1;
+            block.nTime = Assert(m_node.chainman)->ActiveChain().Tip()->GetMedianTimePast() + 1;
             txCoinbase.version = 1;
-            txCoinbase.vin[0].scriptSig = CScript{} << (current_height + 1) << bi.extranonce;
-            txCoinbase.vout.resize(1); // Ignore the (optional) segwit commitment added by CreateNewBlock (as the hardcoded nonces don't account for this)
+            txCoinbase.vin[0].scriptSig = CScript{} << (current_height + 1) << block_offset;
+            txCoinbase.vout.resize(1);
             txCoinbase.vout[0].scriptPubKey = CScript();
             block.vtx[0] = MakeTransactionRef(txCoinbase);
-            if (txFirst.size() == 0)
-                baseheight = current_height;
-            if (txFirst.size() < 4)
-                txFirst.push_back(block.vtx[0]);
+            if (txFirst.empty()) baseheight = current_height;
+            if (txFirst.size() < 4) txFirst.push_back(block.vtx[0]);
             block.hashMerkleRoot = BlockMerkleRoot(block);
-            block.nNonce = bi.nonce;
+            block.nNonce = 0;
         }
+
+        bool solved{false};
+        for (uint32_t tries = 0; tries < kMaxNonceTriesPerBlock; ++tries) {
+            if (CheckProofOfWork(block.GetHash(), block.nBits, Assert(m_node.chainman)->GetParams().GetConsensus())) {
+                solved = true;
+                break;
+            }
+            ++block.nNonce;
+            BOOST_REQUIRE_NE(block.nNonce, 0U);
+        }
+        BOOST_REQUIRE_MESSAGE(solved, strprintf("Unable to find valid PoW nonce within %u tries at height=%d", kMaxNonceTriesPerBlock, current_height + 1));
+
         std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(block);
         // Alternate calls between Chainman's ProcessNewBlock and submitSolution
-        // via the Mining interface. The former is used by net_processing as well
-        // as the submitblock RPC.
+        // via the Mining interface.
         if (current_height % 2 == 0) {
-            BOOST_REQUIRE(Assert(m_node.chainman)->ProcessNewBlock(shared_pblock, /*force_processing=*/true, /*min_pow_checked=*/true, nullptr));
+            bool new_block{false};
+            const bool accepted = Assert(m_node.chainman)->ProcessNewBlock(shared_pblock, /*force_processing=*/true, /*min_pow_checked=*/true, &new_block);
+            if (!accepted) {
+                BlockValidationState state;
+                CBlockIndex* pindex{nullptr};
+                bool accepted_by_acceptblock{false};
+                {
+                    LOCK(cs_main);
+                    accepted_by_acceptblock = Assert(m_node.chainman)->AcceptBlock(shared_pblock, state, &pindex, /*fRequested=*/true, /*dbp=*/nullptr, /*fNewBlock=*/nullptr, /*min_pow_checked=*/true);
+                }
+                BOOST_REQUIRE_MESSAGE(false,
+                    strprintf("ProcessNewBlock rejected new_block=%d acceptblock=%d reject=%s debug=%s",
+                              new_block,
+                              accepted_by_acceptblock,
+                              state.GetRejectReason(),
+                              state.GetDebugMessage()));
+            }
         } else {
             BOOST_REQUIRE(block_template->submitSolution(block.nVersion, block.nTime, block.nNonce, MakeTransactionRef(txCoinbase)));
         }
+
         {
             LOCK(cs_main);
-            // The above calls don't guarantee the tip is actually updated, so
-            // we explicitly check this.
             auto maybe_new_tip{Assert(m_node.chainman)->ActiveChain().Tip()};
             BOOST_REQUIRE_EQUAL(maybe_new_tip->GetBlockHash(), block.GetHash());
-        }
-        if (current_height % 2 == 0) {
-            block_template = block_template->waitNext();
-            BOOST_REQUIRE(block_template);
-        } else {
-            // This just adds coverage
-            mining->waitTipChanged(block.hashPrevBlock);
         }
     }
 

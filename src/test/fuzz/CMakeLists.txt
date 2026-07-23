@@ -28,6 +28,7 @@ add_executable(fuzz
   coins_view.cpp
   coinscache_sim.cpp
   connman.cpp
+  code_quantum_mldsa.cpp
   crypto.cpp
   crypto_aes256.cpp
   crypto_aes256cbc.cpp
@@ -101,6 +102,7 @@ add_executable(fuzz
   script.cpp
   script_assets_test_minimizer.cpp
   script_descriptor_cache.cpp
+  script_fjarcode_consensus.cpp
   script_flags.cpp
   script_format.cpp
   script_interpreter.cpp
@@ -138,9 +140,9 @@ target_link_libraries(fuzz
   core_interface
   fuzzer_interface
   test_fuzz
-  bitcoin_cli
-  bitcoin_common
-  bitcoin_util
+  fjarcode_cli
+  fjarcode_common
+  fjarcode_util
   minisketch
   leveldb
   univalue

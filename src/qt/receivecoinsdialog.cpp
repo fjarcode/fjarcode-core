@@ -87,17 +87,20 @@ void ReceiveCoinsDialog::setModel(WalletModel *_model)
             &ReceiveCoinsDialog::recentRequestsView_selectionChanged);
 
         // Populate address type dropdown and select default
-        auto add_address_type = [&](OutputType type, const QString& text, const QString& tooltip) {
+        const auto add_address_format = [&](AddressFormat format, const QString& text, const QString& tooltip) {
             const auto index = ui->addressType->count();
-            ui->addressType->addItem(text, (int) type);
+            ui->addressType->addItem(text, static_cast<int>(format));
             ui->addressType->setItemData(index, tooltip, Qt::ToolTipRole);
-            if (model->wallet().getDefaultAddressType() == type) ui->addressType->setCurrentIndex(index);
         };
-        add_address_type(OutputType::LEGACY, tr("Base58 (Legacy)"), tr("Not recommended due to higher fees and less protection against typos."));
-        add_address_type(OutputType::P2SH_SEGWIT, tr("Base58 (P2SH-SegWit)"), tr("Generates an address compatible with older wallets."));
-        add_address_type(OutputType::BECH32, tr("Bech32 (SegWit)"), tr("Generates a native segwit address (BIP-173). Some old wallets don't support it."));
-        if (model->wallet().taprootEnabled()) {
-            add_address_type(OutputType::BECH32M, tr("Bech32m (Taproot)"), tr("Bech32m (BIP-350) is an upgrade to Bech32, wallet support is still limited."));
+        constexpr int QUANTUM_ADDRESS_TYPE_UI_ID{-1};
+        add_address_format(AddressFormat::CASHADDR, tr("CashAddr (Standard)"), tr("Standard FJARCODE CashAddr format with the fjarcode: prefix."));
+        add_address_format(AddressFormat::QUANTUM, tr("CashAddr (Quantum)"), tr("Valid FJARCODE CashAddr using the Code Quantum address type."));
+        add_address_format(AddressFormat::LEGACY, tr("Base58 (Legacy)"), tr("Legacy P2PKH/P2SH address using Base58Check."));
+        const int quantum_index = ui->addressType->findData(static_cast<int>(AddressFormat::QUANTUM));
+        if (quantum_index == QUANTUM_ADDRESS_TYPE_UI_ID) {
+            ui->addressType->setCurrentIndex(0);
+        } else {
+            ui->addressType->setCurrentIndex(quantum_index);
         }
 
         // Set the button to be enabled or disabled based on whether the wallet can give out new addresses.
@@ -151,8 +154,32 @@ void ReceiveCoinsDialog::on_receiveButton_clicked()
     QString address;
     QString label = ui->reqLabel->text();
     /* Generate new receiving address */
-    const OutputType address_type = (OutputType)ui->addressType->currentData().toInt();
-    address = model->getAddressTableModel()->addRow(AddressTableModel::Receive, label, "", address_type);
+    const AddressFormat address_format = static_cast<AddressFormat>(ui->addressType->currentData().toInt());
+    if (address_format == AddressFormat::QUANTUM) {
+        QString quantum_error;
+        if (!model->getNewQuantumAddress(label, address, quantum_error)) {
+            QMessageBox::critical(this, windowTitle(),
+                tr("Could not generate new quantum receive address.") +
+                (quantum_error.isEmpty() ? QString() : QString("\n\n") + quantum_error),
+                QMessageBox::Ok, QMessageBox::Ok);
+            clear();
+            return;
+        }
+
+        SendCoinsRecipient info(address, label,
+            ui->reqAmount->value(), ui->reqMessage->text());
+        ReceiveRequestDialog *dialog = new ReceiveRequestDialog(this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose);
+        dialog->setModel(model);
+        dialog->setInfo(info);
+        dialog->show();
+
+        model->getRecentRequestsTableModel()->addNewRequest(info);
+        clear();
+        return;
+    }
+
+    address = model->getAddressTableModel()->addRow(AddressTableModel::Receive, label, "", OutputType::LEGACY, address_format);
 
     switch(model->getAddressTableModel()->getEditStatus())
     {
@@ -177,7 +204,7 @@ void ReceiveCoinsDialog::on_receiveButton_clicked()
         break;
     case AddressTableModel::EditStatus::KEY_GENERATION_FAILURE:
         QMessageBox::critical(this, windowTitle(),
-            tr("Could not generate new %1 address").arg(QString::fromStdString(FormatOutputType(address_type))),
+            tr("Could not generate new receive address."),
             QMessageBox::Ok, QMessageBox::Ok);
         break;
     // These aren't valid return values for our action
@@ -279,7 +306,7 @@ void ReceiveCoinsDialog::copyURI()
     }
 
     const RecentRequestsTableModel * const submodel = model->getRecentRequestsTableModel();
-    const QString uri = GUIUtil::formatBitcoinURI(submodel->entry(sel.row()).recipient);
+    const QString uri = GUIUtil::formatFJARCODEURI(submodel->entry(sel.row()).recipient);
     GUIUtil::setClipboard(uri);
 }
 

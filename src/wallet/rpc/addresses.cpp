@@ -5,6 +5,7 @@
 #include <bitcoin-build-config.h> // IWYU pragma: keep
 
 #include <core_io.h>
+#include <hash.h>
 #include <key_io.h>
 #include <rpc/util.h>
 #include <script/script.h>
@@ -13,11 +14,55 @@
 #include <util/translation.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
+#include <wallet/scriptpubkeyman.h>
 #include <wallet/wallet.h>
 
 #include <univalue.h>
 
 namespace wallet {
+
+static UniValue GenerateQuantumReceiveAddress(CWallet& wallet, const std::string& label)
+{
+    CScript redeem_script;
+    if (auto* legacy_spk_man = wallet.GetLegacyDataSPKM()) {
+        // Legacy wallet path: reserve from keypool without adding a regular receive address-book entry.
+        ReserveDestination reservedest(&wallet, OutputType::LEGACY);
+        auto op_legacy_dest = reservedest.GetReservedDestination(/*internal=*/false);
+        if (!op_legacy_dest) {
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_legacy_dest).original);
+        }
+        reservedest.KeepDestination();
+
+        const PKHash* legacy_pkhash = std::get_if<PKHash>(&*op_legacy_dest);
+        if (!legacy_pkhash) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Could not derive a legacy key destination for quantum address generation.");
+        }
+        redeem_script = GetScriptForDestination(*legacy_pkhash);
+        if (!legacy_spk_man->AddCScript(redeem_script)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to store quantum redeem script in wallet.");
+        }
+    } else {
+        // Descriptor wallet fallback: derive a legacy destination via wallet interface.
+        auto op_legacy_dest = wallet.GetNewDestination(OutputType::LEGACY, "");
+        if (!op_legacy_dest) {
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, util::ErrorString(op_legacy_dest).original);
+        }
+        const PKHash* legacy_pkhash = std::get_if<PKHash>(&*op_legacy_dest);
+        if (!legacy_pkhash) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Could not derive a legacy key destination for quantum address generation.");
+        }
+        redeem_script = GetScriptForDestination(*legacy_pkhash);
+    }
+
+    const QuantumHash quantum_hash{Hash(redeem_script)};
+    const CTxDestination quantum_dest{quantum_hash};
+    if (!wallet.SetAddressBook(quantum_dest, label, AddressPurpose::RECEIVE)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to add generated Code Quantum address to address book");
+    }
+
+    return EncodeDestination(quantum_dest, AddressFormat::QUANTUM);
+}
+
 RPCHelpMan getnewaddress()
 {
     return RPCHelpMan{
@@ -27,7 +72,7 @@ RPCHelpMan getnewaddress()
                 "so payments received with the address will be associated with 'label'.\n",
                 {
                     {"label", RPCArg::Type::STR, RPCArg::Default{""}, "The label name for the address to be linked to. It can also be set to the empty string \"\" to represent the default label. The label does not need to exist, it will be created if there is no label by the given name."},
-                    {"address_type", RPCArg::Type::STR, RPCArg::DefaultHint{"set by -addresstype"}, "The address type to use. Options are " + FormatAllOutputTypes() + "."},
+                    {"address_type", RPCArg::Type::STR, RPCArg::DefaultHint{"quantum"}, "The address type to use. Options are " + FormatAllOutputTypes() + ", quantum."},
                 },
                 RPCResult{
                     RPCResult::Type::STR, "address", "The new bitcoin address"
@@ -50,14 +95,21 @@ RPCHelpMan getnewaddress()
     // Parse the label first so we don't generate a key if there's an error
     const std::string label{LabelFromValue(request.params[0])};
 
-    OutputType output_type = pwallet->m_default_address_type;
-    if (!request.params[1].isNull()) {
-        std::optional<OutputType> parsed = ParseOutputType(request.params[1].get_str());
-        if (!parsed) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Unknown address type '%s'", request.params[1].get_str()));
-        }
-        output_type = parsed.value();
+    if (request.params[1].isNull()) {
+        return GenerateQuantumReceiveAddress(*pwallet, label);
     }
+
+    OutputType output_type = pwallet->m_default_address_type;
+    const std::string requested_address_type = request.params[1].get_str();
+    if (requested_address_type == "quantum") {
+        return GenerateQuantumReceiveAddress(*pwallet, label);
+    }
+
+    std::optional<OutputType> parsed = ParseOutputType(requested_address_type);
+    if (!parsed) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Unknown address type '%s'", requested_address_type));
+    }
+    output_type = parsed.value();
 
     auto op_dest = pwallet->GetNewDestination(output_type, label);
     if (!op_dest) {
@@ -65,6 +117,37 @@ RPCHelpMan getnewaddress()
     }
 
     return EncodeDestination(*op_dest);
+},
+    };
+}
+
+RPCHelpMan getnewquantumaddress()
+{
+    return RPCHelpMan{
+        "getnewquantumaddress",
+        "Returns a new Code Quantum cashaddr for receiving payments.\n"
+                "If 'label' is specified, it is added to the address book\n"
+                "so payments received with the address will be associated with 'label'.\n",
+                {
+                    {"label", RPCArg::Type::STR, RPCArg::Default{""}, "The label name for the address to be linked to. It can also be set to the empty string \"\" to represent the default label. The label does not need to exist, it will be created if there is no label by the given name."},
+                },
+                RPCResult{
+                    RPCResult::Type::STR, "address", "The new Code Quantum cashaddr"
+                },
+                RPCExamples{
+                    HelpExampleCli("getnewquantumaddress", "")
+            + HelpExampleRpc("getnewquantumaddress", "")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    std::shared_ptr<CWallet> const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!pwallet) return UniValue::VNULL;
+
+    LOCK(pwallet->cs_wallet);
+
+    const std::string label{LabelFromValue(request.params[0])};
+
+    return GenerateQuantumReceiveAddress(*pwallet, label);
 },
     };
 }
@@ -351,6 +434,7 @@ public:
     UniValue operator()(const WitnessV1Taproot& id) const { return UniValue(UniValue::VOBJ); }
     UniValue operator()(const PayToAnchor& id) const { return UniValue(UniValue::VOBJ); }
     UniValue operator()(const WitnessUnknown& id) const { return UniValue(UniValue::VOBJ); }
+    UniValue operator()(const QuantumHash& id) const { return UniValue(UniValue::VOBJ); }
 };
 
 static UniValue DescribeWalletAddress(const CWallet& wallet, const CTxDestination& dest)
@@ -387,6 +471,9 @@ RPCHelpMan getaddressinfo()
                         {RPCResult::Type::BOOL, "isscript", /*optional=*/true, "If the key is a script."},
                         {RPCResult::Type::BOOL, "ischange", "If the address was used for change output."},
                         {RPCResult::Type::BOOL, "iswitness", "If the address is a witness address."},
+                        {RPCResult::Type::BOOL, "isquantum", /*optional=*/true, "If the address is a Code Quantum cashaddr destination."},
+                        {RPCResult::Type::STR, "quantum_type", /*optional=*/true, "Code Quantum address subtype."},
+                        {RPCResult::Type::STR_HEX, "quantum_hash", /*optional=*/true, "The hex value of the Code Quantum hash program."},
                         {RPCResult::Type::NUM, "witness_version", /*optional=*/true, "The version number of the witness program."},
                         {RPCResult::Type::STR_HEX, "witness_program", /*optional=*/true, "The hex value of the witness program."},
                         {RPCResult::Type::STR, "script", /*optional=*/true, "The output script type. Only if isscript is true and the redeemscript is known. Possible\n"

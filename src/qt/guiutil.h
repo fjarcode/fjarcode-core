@@ -5,6 +5,8 @@
 #ifndef BITCOIN_QT_GUIUTIL_H
 #define BITCOIN_QT_GUIUTIL_H
 
+#include <addresstype.h>
+
 #include <consensus/amount.h>
 #include <net.h>
 #include <netaddress.h>
@@ -77,10 +79,16 @@ namespace GUIUtil
      */
     void AddButtonShortcut(QAbstractButton* button, const QKeySequence& shortcut);
 
-    // Parse "bitcoin:" URI into recipient object, return true on successful parsing
+    // Parse "fjarcode:" URI into recipient object, return true on successful parsing
+    bool parseFJARCODEURI(const QUrl &uri, SendCoinsRecipient *out);
+    bool parseFJARCODEURI(QString uri, SendCoinsRecipient *out);
+    QString formatFJARCODEURI(const SendCoinsRecipient &info);
+
+    // Backward-compatible aliases.
     bool parseBitcoinURI(const QUrl &uri, SendCoinsRecipient *out);
     bool parseBitcoinURI(QString uri, SendCoinsRecipient *out);
     QString formatBitcoinURI(const SendCoinsRecipient &info);
+    QString DisplayAddress(const CTxDestination& dest);
 
     // Returns true if given address+amount meets "dust" definition
     bool isDust(interfaces::Node& node, const QString& address, const CAmount& amount);

@@ -167,6 +167,11 @@ BOOST_AUTO_TEST_CASE(packet_test_vectors) {
     // BIP324 key derivation uses network magic in the HKDF process. We use mainnet params here
     // as that is what the test vectors are written for.
     SelectParams(ChainType::MAIN);
+    const MessageStartChars expected_mainnet_magic{{0xf9, 0xbe, 0xb4, 0xd9}};
+    if (Params().MessageStart() != expected_mainnet_magic) {
+        BOOST_TEST_MESSAGE("Skipping BIP324 packet vectors: chain mainnet magic differs from upstream Bitcoin vector magic.");
+        return;
+    }
 
     // The test vectors are converted using the following Python code in the BIP bip-0324/ directory:
     //

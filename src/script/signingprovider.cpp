@@ -7,6 +7,7 @@
 #include <script/interpreter.h>
 #include <script/signingprovider.h>
 
+#include <hash.h>
 #include <logging.h>
 
 const SigningProvider& DUMMY_SIGNING_PROVIDER = SigningProvider();
@@ -25,6 +26,11 @@ bool LookupHelper(const M& map, const K& key, V& value)
 bool HidingSigningProvider::GetCScript(const CScriptID& scriptid, CScript& script) const
 {
     return m_provider->GetCScript(scriptid, script);
+}
+
+bool HidingSigningProvider::GetCScriptByHash256(const uint256& scriptid256, CScript& script) const
+{
+    return m_provider->GetCScriptByHash256(scriptid256, script);
 }
 
 bool HidingSigningProvider::GetPubKey(const CKeyID& keyid, CPubKey& pubkey) const
@@ -59,6 +65,7 @@ std::vector<CPubKey> HidingSigningProvider::GetMuSig2ParticipantPubkeys(const CP
 }
 
 bool FlatSigningProvider::GetCScript(const CScriptID& scriptid, CScript& script) const { return LookupHelper(scripts, scriptid, script); }
+bool FlatSigningProvider::GetCScriptByHash256(const uint256& scriptid256, CScript& script) const { return LookupHelper(scripts_hash256, scriptid256, script); }
 bool FlatSigningProvider::GetPubKey(const CKeyID& keyid, CPubKey& pubkey) const { return LookupHelper(pubkeys, keyid, pubkey); }
 bool FlatSigningProvider::GetKeyOrigin(const CKeyID& keyid, KeyOriginInfo& info) const
 {
@@ -97,6 +104,7 @@ std::vector<CPubKey> FlatSigningProvider::GetMuSig2ParticipantPubkeys(const CPub
 FlatSigningProvider& FlatSigningProvider::Merge(FlatSigningProvider&& b)
 {
     scripts.merge(b.scripts);
+    scripts_hash256.merge(b.scripts_hash256);
     pubkeys.merge(b.pubkeys);
     keys.merge(b.keys);
     origins.merge(b.origins);
@@ -182,6 +190,7 @@ bool FillableSigningProvider::AddCScript(const CScript& redeemScript)
 
     LOCK(cs_KeyStore);
     mapScripts[CScriptID(redeemScript)] = redeemScript;
+    mapScriptsHash256[Hash(redeemScript)] = redeemScript;
     return true;
 }
 
@@ -207,6 +216,23 @@ bool FillableSigningProvider::GetCScript(const CScriptID &hash, CScript& redeemS
     ScriptMap::const_iterator mi = mapScripts.find(hash);
     if (mi != mapScripts.end())
     {
+        redeemScriptOut = (*mi).second;
+        return true;
+    }
+    return false;
+}
+
+bool FillableSigningProvider::HaveCScriptByHash256(const uint256& hash) const
+{
+    LOCK(cs_KeyStore);
+    return mapScriptsHash256.count(hash) > 0;
+}
+
+bool FillableSigningProvider::GetCScriptByHash256(const uint256& hash, CScript& redeemScriptOut) const
+{
+    LOCK(cs_KeyStore);
+    ScriptHash256Map::const_iterator mi = mapScriptsHash256.find(hash);
+    if (mi != mapScriptsHash256.end()) {
         redeemScriptOut = (*mi).second;
         return true;
     }
@@ -255,6 +281,14 @@ bool MultiSigningProvider::GetCScript(const CScriptID& scriptid, CScript& script
 {
     for (const auto& provider: m_providers) {
         if (provider->GetCScript(scriptid, script)) return true;
+    }
+    return false;
+}
+
+bool MultiSigningProvider::GetCScriptByHash256(const uint256& scriptid256, CScript& script) const
+{
+    for (const auto& provider: m_providers) {
+        if (provider->GetCScriptByHash256(scriptid256, script)) return true;
     }
     return false;
 }

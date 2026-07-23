@@ -1326,6 +1326,56 @@ public:
     }
 };
 
+/** A parsed sh32(...) descriptor (OP_HASH256 <32-byte hash> OP_EQUAL). */
+class SH32Descriptor final : public DescriptorImpl
+{
+protected:
+    std::vector<CScript> MakeScripts(const std::vector<CPubKey>&, std::span<const CScript> scripts, FlatSigningProvider& out) const override
+    {
+        const QuantumHash id{Hash(scripts[0])};
+        auto ret = Vector(GetScriptForDestination(id));
+        if (ret.size()) out.scripts_hash256.emplace(Hash(scripts[0]), scripts[0]);
+        return ret;
+    }
+
+    bool IsSegwit() const { return m_subdescriptor_args[0]->GetOutputType() == OutputType::BECH32; }
+
+public:
+    SH32Descriptor(std::unique_ptr<DescriptorImpl> desc) : DescriptorImpl({}, std::move(desc), "sh32") {}
+
+    std::optional<OutputType> GetOutputType() const override
+    {
+        // Kept as LEGACY wrapper semantics (non-witness outer script).
+        return OutputType::LEGACY;
+    }
+    bool IsSingleType() const final { return true; }
+
+    std::optional<int64_t> ScriptSize() const override { return 1 + 1 + 32 + 1; }
+
+    std::optional<int64_t> MaxSatisfactionWeight(bool use_max_sig) const override {
+        if (const auto sat_size = m_subdescriptor_args[0]->MaxSatSize(use_max_sig)) {
+            if (const auto subscript_size = m_subdescriptor_args[0]->ScriptSize()) {
+                // The subscript is never witness data.
+                const auto subscript_weight = (GetSizeOfCompactSize(*subscript_size) + *subscript_size) * WITNESS_SCALE_FACTOR;
+                // The weight depends on whether the inner descriptor is satisfied using the witness stack.
+                if (IsSegwit()) return subscript_weight + *sat_size;
+                return subscript_weight + *sat_size * WITNESS_SCALE_FACTOR;
+            }
+        }
+        return {};
+    }
+
+    std::optional<int64_t> MaxSatisfactionElems() const override {
+        if (const auto sub_elems = m_subdescriptor_args[0]->MaxSatisfactionElems()) return 1 + *sub_elems;
+        return {};
+    }
+
+    std::unique_ptr<DescriptorImpl> Clone() const override
+    {
+        return std::make_unique<SH32Descriptor>(m_subdescriptor_args.at(0)->Clone());
+    }
+};
+
 /** A parsed wsh(...) descriptor. */
 class WSHDescriptor final : public DescriptorImpl
 {
@@ -2298,6 +2348,19 @@ std::vector<std::unique_ptr<DescriptorImpl>> ParseScript(uint32_t& key_exp_index
         error = "Can only have sh() at top level";
         return {};
     }
+    if (ctx == ParseScriptContext::TOP && Func("sh32", expr)) {
+        auto descs = ParseScript(key_exp_index, expr, ParseScriptContext::P2SH, out, error);
+        if (descs.empty() || expr.size()) return {};
+        std::vector<std::unique_ptr<DescriptorImpl>> ret;
+        ret.reserve(descs.size());
+        for (auto& desc : descs) {
+            ret.push_back(std::make_unique<SH32Descriptor>(std::move(desc)));
+        }
+        return ret;
+    } else if (Func("sh32", expr)) {
+        error = "Can only have sh32() at top level";
+        return {};
+    }
     if ((ctx == ParseScriptContext::TOP || ctx == ParseScriptContext::P2SH) && Func("wsh", expr)) {
         auto descs = ParseScript(key_exp_index, expr, ParseScriptContext::P2WSH, out, error);
         if (descs.empty() || expr.size()) return {};
@@ -2618,6 +2681,14 @@ std::unique_ptr<DescriptorImpl> InferScript(const CScript& script, ParseScriptCo
         if (provider.GetCScript(scriptid, subscript)) {
             auto sub = InferScript(subscript, ParseScriptContext::P2SH, provider);
             if (sub) return std::make_unique<SHDescriptor>(std::move(sub));
+        }
+    }
+    if (txntype == TxoutType::SCRIPTHASH32 && ctx == ParseScriptContext::TOP) {
+        uint256 hash(data[0]);
+        CScript subscript;
+        if (provider.GetCScriptByHash256(hash, subscript)) {
+            auto sub = InferScript(subscript, ParseScriptContext::P2SH, provider);
+            if (sub) return std::make_unique<SH32Descriptor>(std::move(sub));
         }
     }
     if (txntype == TxoutType::WITNESS_V0_SCRIPTHASH && (ctx == ParseScriptContext::TOP || ctx == ParseScriptContext::P2SH)) {

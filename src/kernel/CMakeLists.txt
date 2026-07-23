@@ -23,6 +23,7 @@ add_library(bitcoinkernel
   ../coins.cpp
   ../compressor.cpp
   ../consensus/merkle.cpp
+  ../consensus/tokens.cpp
   ../consensus/tx_check.cpp
   ../consensus/tx_verify.cpp
   ../core_read.cpp
@@ -42,13 +43,19 @@ add_library(bitcoinkernel
   ../policy/rbf.cpp
   ../policy/settings.cpp
   ../policy/truc_policy.cpp
+  ../policy/v3_policy.cpp
   ../pow.cpp
   ../primitives/block.cpp
   ../primitives/transaction.cpp
   ../pubkey.cpp
   ../random.cpp
   ../randomenv.cpp
+  ../script/code_quantum_mldsa_backend_native.cpp
+  ../script/code_quantum_mldsa_backend_provider.cpp
+  ../script/code_quantum_mldsa_backend.cpp
+  ../script/code_quantum_mldsa.cpp
   ../script/interpreter.cpp
+  ../script/sigencoding.cpp
   ../script/script.cpp
   ../script/script_error.cpp
   ../script/sigcache.cpp
@@ -79,8 +86,8 @@ add_library(bitcoinkernel
   ../validation.cpp
   ../validationinterface.cpp
   ../versionbits.cpp
-  $<TARGET_OBJECTS:bitcoin_clientversion>
-  $<TARGET_OBJECTS:bitcoin_crypto>
+  $<TARGET_OBJECTS:fjarcode_clientversion>
+  $<TARGET_OBJECTS:fjarcode_crypto>
   $<TARGET_OBJECTS:leveldb>
   $<TARGET_OBJECTS:crc32c>
 )

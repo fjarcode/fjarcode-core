@@ -5,6 +5,7 @@
 #include <pubkey.h>
 #include <script/descriptor.h>
 #include <script/sign.h>
+#include <hash.h>
 #include <test/util/setup_common.h>
 #include <util/check.h>
 #include <util/strencodings.h>
@@ -531,6 +532,7 @@ void CheckInferDescriptor(const std::string& script_hex, const std::string& expe
         std::vector<unsigned char> prov_script_bytes{ParseHex(prov_script_hex)};
         const CScript& prov_script{prov_script_bytes.begin(), prov_script_bytes.end()};
         provider.scripts.emplace(CScriptID(prov_script), prov_script);
+        provider.scripts_hash256.emplace(Hash(prov_script), prov_script);
     }
     for (const auto& [pubkey_hex, origin_str] : origin_pubkeys) {
         CPubKey origin_pubkey{ParseHex(pubkey_hex)};
@@ -1127,9 +1129,11 @@ BOOST_AUTO_TEST_CASE(descriptor_test)
     // p2pk script with hybrid key must infer as raw()
     CheckInferDescriptor("41069228de6902abb4f541791f6d7f925b10e2078ccb1298856e5ea5cc5fd667f930eac37a00cc07f9a91ef3c2d17bf7a17db04552ff90ac312a5b8b4caca6c97aa4ac", "raw(41069228de6902abb4f541791f6d7f925b10e2078ccb1298856e5ea5cc5fd667f930eac37a00cc07f9a91ef3c2d17bf7a17db04552ff90ac312a5b8b4caca6c97aa4ac)", {}, {{"069228de6902abb4f541791f6d7f925b10e2078ccb1298856e5ea5cc5fd667f930eac37a00cc07f9a91ef3c2d17bf7a17db04552ff90ac312a5b8b4caca6c97aa4", ""}});
     // p2pkh script with hybrid key must infer as addr()
-    CheckInferDescriptor("76a91445ff7c2327866472639d507334a9a00119dfd32688ac", "addr(17P7ge56F2QcdHxxRBa2NyzmejFggPwBJ9)", {}, {{"069228de6902abb4f541791f6d7f925b10e2078ccb1298856e5ea5cc5fd667f930eac37a00cc07f9a91ef3c2d17bf7a17db04552ff90ac312a5b8b4caca6c97aa4", ""}});
+    CheckInferDescriptor("76a91445ff7c2327866472639d507334a9a00119dfd32688ac", "addr(fjarcode:qpzl7lpry7rxgunrn4g8xd9f5qq3nh7nyc39cfswgx)", {}, {{"069228de6902abb4f541791f6d7f925b10e2078ccb1298856e5ea5cc5fd667f930eac37a00cc07f9a91ef3c2d17bf7a17db04552ff90ac312a5b8b4caca6c97aa4", ""}});
     // p2wpkh script with uncompressed key must infer as addr()
     CheckInferDescriptor("001422e363a523947a110d9a9eb114820de183aca313", "addr(bc1qyt3k8ffrj3apzrv6n6c3fqsduxp6egcnk2r66j)", {}, {{"049228de6902abb4f541791f6d7f925b10e2078ccb1298856e5ea5cc5fd667f930eac37a00cc07f9a91ef3c2d17bf7a17db04552ff90ac312a5b8b4caca6c97aa4", ""}});
+    // Code Quantum SCRIPTHASH32 inference (OP_HASH256 <32-byte hash> OP_EQUAL)
+    CheckInferDescriptor("aa20e260a1fb5efdaf43c3d90b763b4ffcfc39932a8cf21b24aef50671399d75bff587", "sh32(pkh([deadbeef/0h/0h/0]03a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd))", {"76a9149a1c78a507689f6f54b847ad1cef1e614ee23f1e88ac"}, {{"03a34b99f22c790c4e36b2b3c2c35a36db06226e41c692fc82b8b56ac1c540c5bd", "deadbeef/0h/0h/0"}});
     // Infer pkh() from p2pkh with uncompressed key
     CheckInferDescriptor("76a914a31725c74421fadc50d35520ab8751ed120af80588ac", "pkh(04c56fe4a92d401bcbf1b3dfbe4ac3dac5602ca155a3681497f02c1b9a733b92d704e2da6ec4162e4846af9236ef4171069ac8b7f8234a8405b6cadd96f34f5a31)", {}, {{"04c56fe4a92d401bcbf1b3dfbe4ac3dac5602ca155a3681497f02c1b9a733b92d704e2da6ec4162e4846af9236ef4171069ac8b7f8234a8405b6cadd96f34f5a31", ""}});
     // Infer pk() from p2pk with uncompressed key

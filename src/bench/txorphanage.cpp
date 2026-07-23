@@ -14,6 +14,7 @@
 #include <util/check.h>
 #include <test/util/transaction_utils.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 
@@ -190,9 +191,9 @@ static void OrphanageEraseAll(benchmark::Bench& bench, bool block_or_disconnect)
 {
     FastRandomContext det_rand{true};
     const auto orphanage{node::MakeTxOrphanage(/*max_global_latency_score=*/node::DEFAULT_MAX_ORPHANAGE_LATENCY_SCORE, /*reserved_peer_usage=*/node::DEFAULT_RESERVED_ORPHAN_WEIGHT_PER_PEER)};
-    // This is an unrealistically large number of inputs for a block, as there is almost no room given to witness data,
-    // outputs, and overhead for individual transactions. The entire block is 1 transaction with 20,000 inputs.
-    constexpr unsigned int NUM_BLOCK_INPUTS{MAX_BLOCK_WEIGHT / APPROX_WEIGHT_PER_INPUT};
+    // Keep the benchmark at a realistic scale independent of consensus max block weight.
+    // The original workload assumes roughly 20,000 inputs overall.
+    constexpr unsigned int NUM_BLOCK_INPUTS{std::min<unsigned int>(MAX_BLOCK_WEIGHT / APPROX_WEIGHT_PER_INPUT, 20'000)};
     const auto block_tx{MakeTransactionBulkedTo(NUM_BLOCK_INPUTS, MAX_BLOCK_WEIGHT - 4000, det_rand)};
     CBlock block;
     block.vtx.push_back(block_tx);

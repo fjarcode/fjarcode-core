@@ -8,9 +8,19 @@
 #include <crypto/ripemd160.h>
 #include <crypto/sha1.h>
 #include <crypto/sha256.h>
+#include <crypto/sha3.h>
 #include <pubkey.h>
+#include <script/code_quantum_mldsa.h>
+#include <script/code_quantum_params.h>
+#include <script/script_flags.h>
+#include <script/script_metrics.h>
 #include <script/script.h>
+#include <script/sigencoding.h>
+#include <script/vm_limits.h>
 #include <uint256.h>
+
+#include <algorithm>
+#include <array>
 
 typedef std::vector<unsigned char> valtype;
 
@@ -94,124 +104,118 @@ bool static IsCompressedPubKey(const valtype &vchPubKey) {
     return true;
 }
 
-/**
- * A canonical signature exists of: <30> <total len> <02> <len R> <R> <02> <len S> <S> <hashtype>
- * Where R and S are not negative (their first byte has its highest bit not set), and not
- * excessively padded (do not start with a 0 byte, unless an otherwise negative number follows,
- * in which case a single 0 byte is necessary and even required).
- *
- * See https://bitcointalk.org/index.php?topic=8392.msg127623#msg127623
- *
- * This function is consensus-critical since BIP66.
- */
-bool static IsValidSignatureEncoding(const std::vector<unsigned char> &sig) {
-    // Format: 0x30 [total-length] 0x02 [R-length] [R] 0x02 [S-length] [S] [sighash]
-    // * total-length: 1-byte length descriptor of everything that follows,
-    //   excluding the sighash byte.
-    // * R-length: 1-byte length descriptor of the R value that follows.
-    // * R: arbitrary-length big-endian encoded R value. It must use the shortest
-    //   possible encoding for a positive integer (which means no null bytes at
-    //   the start, except a single one when the next byte has its highest bit set).
-    // * S-length: 1-byte length descriptor of the S value that follows.
-    // * S: arbitrary-length big-endian encoded S value. The same rules apply.
-    // * sighash: 1-byte value indicating what data is hashed (not part of the DER
-    //   signature)
+struct CodeQuantumEnvelope
+{
+    uint8_t version{0};
+    uint8_t mode{0};
+    uint8_t algorithm{0};
+    std::vector<unsigned char> wrapped_sig;
+};
 
-    // Minimum and maximum size constraints.
-    if (sig.size() < 9) return false;
-    if (sig.size() > 73) return false;
+static constexpr uint8_t CODE_QUANTUM_MAX_WRAPPED_SIG_SIZE = static_cast<uint8_t>(codequantum::MAX_WRAPPED_SIG_SIZE);
+static constexpr size_t CODE_QUANTUM_MAX_ENVELOPE_SIZE = codequantum::MAX_ENVELOPE_SIZE;
+static constexpr size_t CODE_QUANTUM_MAX_PUBKEY_SIZE = codequantum::MAX_PUBKEY_SIZE;
+static constexpr size_t CODE_QUANTUM_MAX_STACK_PUSH_TOTAL = codequantum::MAX_STACK_PUSH_TOTAL;
 
-    // A signature is of type 0x30 (compound).
-    if (sig[0] != 0x30) return false;
+static constexpr uint8_t CODE_QUANTUM_MODE_V1_WRAPPED_ECDSA = codequantum::MODE_V1_WRAPPED_ECDSA;
+static constexpr uint8_t CODE_QUANTUM_MODE_V1_RESERVED_EXTENSION_START = codequantum::MODE_V1_RESERVED_EXTENSION_START;
+static constexpr uint32_t CODE_QUANTUM_VERIFY_COST_LIMIT = codequantum::VERIFY_COST_LIMIT;
+static constexpr uint8_t CODE_QUANTUM_ALGORITHM_V1_WRAPPED_ECDSA_DER = codequantum::ALGORITHM_V1_WRAPPED_ECDSA_DER;
+static constexpr uint8_t CODE_QUANTUM_ALGORITHM_V1_SHA3_256T = codequantum::ALGORITHM_V1_SHA3_256T;
+static constexpr uint8_t CODE_QUANTUM_ALGORITHM_V1_ML_DSA_65 = codequantum::ALGORITHM_V1_ML_DSA_65;
+static constexpr bool CODE_QUANTUM_ML_DSA_65_RUNTIME_ENABLED = codequantum::ML_DSA_65_RUNTIME_ENABLED;
 
-    // Make sure the length covers the entire signature.
-    if (sig[1] != sig.size() - 3) return false;
+static constexpr auto CODE_QUANTUM_SUPPORTED_MODES = codequantum::SUPPORTED_MODES;
 
-    // Extract the length of the R element.
-    unsigned int lenR = sig[3];
+// This enumerates known algorithm IDs for migration visibility. SHA3-256t is
+// intentionally registered here even before the full runtime path is enabled.
+static constexpr auto CODE_QUANTUM_MODE_V1_KNOWN_ALGORITHMS = codequantum::MODE_V1_KNOWN_ALGORITHMS;
 
-    // Make sure the length of the S element is still inside the signature.
-    if (5 + lenR >= sig.size()) return false;
+// Runtime support is staged; wrapped ECDSA variants are currently dispatched.
+static constexpr auto CODE_QUANTUM_MODE_V1_ACTIVE_ALGORITHMS = codequantum::MODE_V1_ACTIVE_ALGORITHMS;
 
-    // Extract the length of the S element.
-    unsigned int lenS = sig[5 + lenR];
-
-    // Verify that the length of the signature matches the sum of the length
-    // of the elements.
-    if ((size_t)(lenR + lenS + 7) != sig.size()) return false;
-
-    // Check whether the R element is an integer.
-    if (sig[2] != 0x02) return false;
-
-    // Zero-length integers are not allowed for R.
-    if (lenR == 0) return false;
-
-    // Negative numbers are not allowed for R.
-    if (sig[4] & 0x80) return false;
-
-    // Null bytes at the start of R are not allowed, unless R would
-    // otherwise be interpreted as a negative number.
-    if (lenR > 1 && (sig[4] == 0x00) && !(sig[5] & 0x80)) return false;
-
-    // Check whether the S element is an integer.
-    if (sig[lenR + 4] != 0x02) return false;
-
-    // Zero-length integers are not allowed for S.
-    if (lenS == 0) return false;
-
-    // Negative numbers are not allowed for S.
-    if (sig[lenR + 6] & 0x80) return false;
-
-    // Null bytes at the start of S are not allowed, unless S would otherwise be
-    // interpreted as a negative number.
-    if (lenS > 1 && (sig[lenR + 6] == 0x00) && !(sig[lenR + 7] & 0x80)) return false;
-
-    return true;
+static bool IsSupportedCodeQuantumMode(uint8_t mode)
+{
+    return std::find(CODE_QUANTUM_SUPPORTED_MODES.begin(),
+                     CODE_QUANTUM_SUPPORTED_MODES.end(),
+                     mode) != CODE_QUANTUM_SUPPORTED_MODES.end();
 }
 
-bool static IsLowDERSignature(const valtype &vchSig, ScriptError* serror) {
-    if (!IsValidSignatureEncoding(vchSig)) {
-        return set_error(serror, SCRIPT_ERR_SIG_DER);
-    }
-    // https://bitcoin.stackexchange.com/a/12556:
-    //     Also note that inside transaction signatures, an extra hashtype byte
-    //     follows the actual signature data.
-    std::vector<unsigned char> vchSigCopy(vchSig.begin(), vchSig.begin() + vchSig.size() - 1);
-    // If the S value is above the order of the curve divided by two, its
-    // complement modulo the order could have been used instead, which is
-    // one byte shorter when encoded correctly.
-    if (!CPubKey::CheckLowS(vchSigCopy)) {
-        return set_error(serror, SCRIPT_ERR_SIG_HIGH_S);
-    }
-    return true;
+static bool IsReservedCodeQuantumModeExtension(uint8_t mode)
+{
+    return mode >= CODE_QUANTUM_MODE_V1_RESERVED_EXTENSION_START;
 }
 
-bool static IsDefinedHashtypeSignature(const valtype &vchSig) {
-    if (vchSig.size() == 0) {
+static bool IsKnownCodeQuantumAlgorithm(uint8_t mode, uint8_t algorithm)
+{
+    if (!IsSupportedCodeQuantumMode(mode)) {
         return false;
     }
-    unsigned char nHashType = vchSig[vchSig.size() - 1] & (~(SIGHASH_ANYONECANPAY));
-    if (nHashType < SIGHASH_ALL || nHashType > SIGHASH_SINGLE)
-        return false;
+    return std::find(CODE_QUANTUM_MODE_V1_KNOWN_ALGORITHMS.begin(),
+                     CODE_QUANTUM_MODE_V1_KNOWN_ALGORITHMS.end(),
+                     algorithm) != CODE_QUANTUM_MODE_V1_KNOWN_ALGORITHMS.end();
+}
 
+static bool IsActiveCodeQuantumAlgorithm(uint8_t mode, uint8_t algorithm)
+{
+    if (!IsSupportedCodeQuantumMode(mode)) {
+        return false;
+    }
+    if (algorithm == CODE_QUANTUM_ALGORITHM_V1_ML_DSA_65) {
+        return CODE_QUANTUM_ML_DSA_65_RUNTIME_ENABLED;
+    }
+    return std::find(CODE_QUANTUM_MODE_V1_ACTIVE_ALGORITHMS.begin(),
+                     CODE_QUANTUM_MODE_V1_ACTIVE_ALGORITHMS.end(),
+                     algorithm) != CODE_QUANTUM_MODE_V1_ACTIVE_ALGORITHMS.end();
+}
+
+static uint32_t CodeQuantumVerifyCost(const valtype& wrapped_sig, const valtype& pubkey)
+{
+    return static_cast<uint32_t>(wrapped_sig.size() + pubkey.size());
+}
+static uint256 HashSHA3_256t(const uint256& input)
+{
+    uint256 result = input;
+    SHA3_256().Write(std::span<const unsigned char>{result.begin(), result.size()}).Finalize(std::span<unsigned char>{result.begin(), result.size()});
+    SHA3_256().Write(std::span<const unsigned char>{result.begin(), result.size()}).Finalize(std::span<unsigned char>{result.begin(), result.size()});
+    SHA3_256().Write(std::span<const unsigned char>{result.begin(), result.size()}).Finalize(std::span<unsigned char>{result.begin(), result.size()});
+    return result;
+}
+
+bool static IsCodeQuantumEnvelope(const valtype& vchSig)
+{
+    return vchSig.size() >= 2 && vchSig[0] == 'C' && vchSig[1] == 'Q';
+}
+
+bool static DecodeCodeQuantumEnvelope(const valtype& vchSig, CodeQuantumEnvelope& envelope, ScriptError* serror)
+{
+    // Envelope: 'C' 'Q' version mode algorithm wrapped_sig_len wrapped_sig_bytes...
+    if (vchSig.size() < 6) {
+        return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+    }
+    if (vchSig.size() > CODE_QUANTUM_MAX_ENVELOPE_SIZE) {
+        return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+    }
+    envelope.version = vchSig[2];
+    envelope.mode = vchSig[3];
+    envelope.algorithm = vchSig[4];
+    const uint8_t wrapped_sig_len = vchSig[5];
+    if (wrapped_sig_len > CODE_QUANTUM_MAX_WRAPPED_SIG_SIZE) {
+        return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+    }
+    if (vchSig.size() != static_cast<size_t>(6) + wrapped_sig_len) {
+        return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+    }
+    if (envelope.version != 1) {
+        return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+    }
+    envelope.wrapped_sig.assign(vchSig.begin() + 6, vchSig.end());
     return true;
 }
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError* serror) {
-    // Empty signature. Not strictly DER encoded, but allowed to provide a
-    // compact way to provide an invalid signature for use with CHECK(MULTI)SIG
-    if (vchSig.size() == 0) {
-        return true;
-    }
-    if ((flags & (SCRIPT_VERIFY_DERSIG | SCRIPT_VERIFY_LOW_S | SCRIPT_VERIFY_STRICTENC)) != 0 && !IsValidSignatureEncoding(vchSig)) {
-        return set_error(serror, SCRIPT_ERR_SIG_DER);
-    } else if ((flags & SCRIPT_VERIFY_LOW_S) != 0 && !IsLowDERSignature(vchSig, serror)) {
-        // serror is set
-        return false;
-    } else if ((flags & SCRIPT_VERIFY_STRICTENC) != 0 && !IsDefinedHashtypeSignature(vchSig)) {
-        return set_error(serror, SCRIPT_ERR_SIG_HASHTYPE);
-    }
-    return true;
+    const ByteView sig_view{vchSig.data(), vchSig.size()};
+    return CheckTransactionSignatureEncoding(sig_view, flags, serror);
 }
 
 bool static CheckPubKeyEncoding(const valtype &vchPubKey, unsigned int flags, const SigVersion &sigversion, ScriptError* serror) {
@@ -317,27 +321,106 @@ public:
 };
 }
 
+/**
+ * Validate DER signature encoding used by legacy/Code Quantum wrapped paths.
+ * This variant expects the trailing sighash byte to be present.
+ */
+static bool IsValidSignatureEncoding(const std::vector<unsigned char>& sig)
+{
+    if (sig.size() < 9) return false;
+    if (sig.size() > 73) return false;
+    if (sig[0] != 0x30) return false;
+    if (sig[1] != sig.size() - 3) return false;
+
+    const unsigned int len_r = sig[3];
+    if (5 + len_r >= sig.size()) return false;
+    const unsigned int len_s = sig[5 + len_r];
+    if (size_t(len_r + len_s + 7) != sig.size()) return false;
+
+    if (sig[2] != 0x02) return false;
+    if (len_r == 0) return false;
+    if (sig[4] & 0x80) return false;
+    if (len_r > 1 && sig[4] == 0x00 && !(sig[5] & 0x80)) return false;
+
+    if (sig[len_r + 4] != 0x02) return false;
+    if (len_s == 0) return false;
+    if (sig[len_r + 6] & 0x80) return false;
+    if (len_s > 1 && sig[len_r + 6] == 0x00 && !(sig[len_r + 7] & 0x80)) return false;
+
+    return true;
+}
+
 static bool EvalChecksigPreTapscript(const valtype& vchSig, const valtype& vchPubKey, CScript::const_iterator pbegincodehash, CScript::const_iterator pend, unsigned int flags, const BaseSignatureChecker& checker, SigVersion sigversion, ScriptError* serror, bool& fSuccess)
 {
     assert(sigversion == SigVersion::BASE || sigversion == SigVersion::WITNESS_V0);
+
+    valtype sig_for_verify = vchSig;
+    bool code_quantum_dispatch = false;
+    uint8_t code_quantum_mode = 0;
+    uint8_t code_quantum_algorithm = 0;
+    if (IsCodeQuantumEnvelope(vchSig)) {
+        if ((flags & SCRIPT_ENABLE_FJARCODE_OPCODES) == 0) {
+            return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_ACTIVATION_STATE);
+        }
+        CodeQuantumEnvelope envelope;
+        if (!DecodeCodeQuantumEnvelope(vchSig, envelope, serror)) {
+            return false;
+        }
+        if (vchSig.size() + vchPubKey.size() > CODE_QUANTUM_MAX_STACK_PUSH_TOTAL) {
+            return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
+        }
+        if (!IsSupportedCodeQuantumMode(envelope.mode)) {
+            if (IsReservedCodeQuantumModeExtension(envelope.mode)) {
+                return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_MODE);
+            }
+            return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_MODE);
+        }
+        if (!IsKnownCodeQuantumAlgorithm(envelope.mode, envelope.algorithm) ||
+            !IsActiveCodeQuantumAlgorithm(envelope.mode, envelope.algorithm)) {
+            return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_ALGORITHM_ID);
+        }
+        if (envelope.wrapped_sig.empty()) {
+            return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_MISSING_REQUIRED_SIG);
+        }
+        if (!IsValidSignatureEncoding(envelope.wrapped_sig)) {
+            return set_error(serror, SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+        }
+        code_quantum_dispatch = true;
+        code_quantum_mode = envelope.mode;
+        code_quantum_algorithm = envelope.algorithm;
+        sig_for_verify = std::move(envelope.wrapped_sig);
+    }
 
     // Subset of script starting at the most recent codeseparator
     CScript scriptCode(pbegincodehash, pend);
 
     // Drop the signature in pre-segwit scripts but not segwit scripts
     if (sigversion == SigVersion::BASE) {
-        int found = FindAndDelete(scriptCode, CScript() << vchSig);
+        int found = FindAndDelete(scriptCode, CScript() << sig_for_verify);
         if (found > 0 && (flags & SCRIPT_VERIFY_CONST_SCRIPTCODE))
             return set_error(serror, SCRIPT_ERR_SIG_FINDANDDELETE);
     }
 
-    if (!CheckSignatureEncoding(vchSig, flags, serror) || !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror)) {
-        //serror is set
-        return false;
+    if (code_quantum_dispatch) {
+        if (vchPubKey.size() > CODE_QUANTUM_MAX_PUBKEY_SIZE) {
+            return set_error(serror, SCRIPT_ERR_PUBKEYTYPE);
+        }
+        if (CodeQuantumVerifyCost(sig_for_verify, vchPubKey) > CODE_QUANTUM_VERIFY_COST_LIMIT) {
+            return set_error(serror, SCRIPT_ERR_OP_COUNT);
+        }
+        if (!CheckSignatureEncoding(sig_for_verify, flags, serror) || !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror)) {
+            return false;
+        }
+        fSuccess = checker.CheckCodeQuantumSignature(code_quantum_mode, code_quantum_algorithm, sig_for_verify, vchPubKey, scriptCode, sigversion);
+    } else {
+        if (!CheckSignatureEncoding(sig_for_verify, flags, serror) || !CheckPubKeyEncoding(vchPubKey, flags, sigversion, serror)) {
+            //serror is set
+            return false;
+        }
+        fSuccess = checker.CheckECDSASignature(sig_for_verify, vchPubKey, scriptCode, sigversion);
     }
-    fSuccess = checker.CheckECDSASignature(vchSig, vchPubKey, scriptCode, sigversion);
 
-    if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && vchSig.size())
+    if (!fSuccess && (flags & SCRIPT_VERIFY_NULLFAIL) && sig_for_verify.size())
         return set_error(serror, SCRIPT_ERR_SIG_NULLFAIL);
 
     return true;
@@ -403,7 +486,7 @@ static bool EvalChecksig(const valtype& sig, const valtype& pubkey, CScript::con
     assert(false);
 }
 
-bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& script, unsigned int flags, const BaseSignatureChecker& checker, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror)
+static bool EvalScriptInternal(std::vector<std::vector<unsigned char> >& stack, const CScript& script, unsigned int flags, const BaseSignatureChecker& checker, SigVersion sigversion, ScriptExecutionData& execdata, ScriptExecutionMetrics* p_metrics, ScriptError* serror)
 {
     static const CScriptNum bnZero(0);
     static const CScriptNum bnOne(1);
@@ -424,6 +507,12 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
     ConditionStack vfExec;
     std::vector<valtype> altstack;
     set_error(serror, SCRIPT_ERR_UNKNOWN_ERROR);
+    const bool vm_limits_active = IsExplicitCompatFlagsContext(flags) &&
+                                  IsVmLimitsEnabled(flags) &&
+                                  p_metrics != nullptr &&
+                                  p_metrics->HasValidScriptLimits();
+    const unsigned int max_element_size = vm_limits_active ? vm_limits::may2025::MAX_SCRIPT_ELEMENT_SIZE : MAX_SCRIPT_ELEMENT_SIZE;
+
     if ((sigversion == SigVersion::BASE || sigversion == SigVersion::WITNESS_V0) && script.size() > MAX_SCRIPT_SIZE) {
         return set_error(serror, SCRIPT_ERR_SCRIPT_SIZE);
     }
@@ -443,12 +532,23 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
             //
             if (!script.GetOp(pc, opcode, vchPushValue))
                 return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
-            if (vchPushValue.size() > MAX_SCRIPT_ELEMENT_SIZE)
+            if (vchPushValue.size() > max_element_size)
                 return set_error(serror, SCRIPT_ERR_PUSH_SIZE);
 
-            if (sigversion == SigVersion::BASE || sigversion == SigVersion::WITNESS_V0) {
+            if (vm_limits_active && fExec && opcode <= OP_PUSHDATA4 && !vchPushValue.empty()) {
+                p_metrics->TallyPushOp(vchPushValue.size());
+            }
+
+            if (!vm_limits_active && (sigversion == SigVersion::BASE || sigversion == SigVersion::WITNESS_V0)) {
                 // Note how OP_RESERVED does not count towards the opcode limit.
                 if (opcode > OP_16 && ++nOpCount > MAX_OPS_PER_SCRIPT) {
+                    return set_error(serror, SCRIPT_ERR_OP_COUNT);
+                }
+            }
+
+            if (vm_limits_active && fExec && opcode > OP_16) {
+                p_metrics->TallyOp(vm_limits::may2025::OPCODE_COST);
+                if (p_metrics->IsOverOpCostLimit(flags)) {
                     return set_error(serror, SCRIPT_ERR_OP_COUNT);
                 }
             }
@@ -1039,6 +1139,14 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
                         CHash160().Write(vch).Finalize(vchHash);
                     else if (opcode == OP_HASH256)
                         CHash256().Write(vch).Finalize(vchHash);
+
+                    if (vm_limits_active) {
+                        p_metrics->TallyHashOp(vch.size(), opcode == OP_HASH160 || opcode == OP_HASH256);
+                        if (p_metrics->IsOverHashItersLimit() || p_metrics->IsOverOpCostLimit(flags)) {
+                            return set_error(serror, SCRIPT_ERR_OP_COUNT);
+                        }
+                    }
+
                     popstack(stack);
                     stack.push_back(vchHash);
                 }
@@ -1067,6 +1175,12 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
 
                     bool fSuccess = true;
                     if (!EvalChecksig(vchSig, vchPubKey, pbegincodehash, pend, execdata, flags, checker, sigversion, serror, fSuccess)) return false;
+                    if (vm_limits_active) {
+                        p_metrics->TallySigChecks(1);
+                        if (p_metrics->IsOverOpCostLimit(flags)) {
+                            return set_error(serror, SCRIPT_ERR_OP_COUNT);
+                        }
+                    }
                     popstack(stack);
                     popstack(stack);
                     stack.push_back(fSuccess ? vchTrue : vchFalse);
@@ -1094,6 +1208,12 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
 
                     bool success = true;
                     if (!EvalChecksig(sig, pubkey, pbegincodehash, pend, execdata, flags, checker, sigversion, serror, success)) return false;
+                    if (vm_limits_active) {
+                        p_metrics->TallySigChecks(1);
+                        if (p_metrics->IsOverOpCostLimit(flags)) {
+                            return set_error(serror, SCRIPT_ERR_OP_COUNT);
+                        }
+                    }
                     popstack(stack);
                     popstack(stack);
                     popstack(stack);
@@ -1115,9 +1235,12 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
                     int nKeysCount = CScriptNum(stacktop(-i), fRequireMinimal).getint();
                     if (nKeysCount < 0 || nKeysCount > MAX_PUBKEYS_PER_MULTISIG)
                         return set_error(serror, SCRIPT_ERR_PUBKEY_COUNT);
-                    nOpCount += nKeysCount;
-                    if (nOpCount > MAX_OPS_PER_SCRIPT)
-                        return set_error(serror, SCRIPT_ERR_OP_COUNT);
+                    if (!vm_limits_active) {
+                        nOpCount += nKeysCount;
+                        if (nOpCount > MAX_OPS_PER_SCRIPT) {
+                            return set_error(serror, SCRIPT_ERR_OP_COUNT);
+                        }
+                    }
                     int ikey = ++i;
                     // ikey2 is the position of last non-signature item in the stack. Top stack item = 1.
                     // With SCRIPT_VERIFY_NULLFAIL, this is used for cleanup if operation fails.
@@ -1164,6 +1287,13 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
 
                         // Check signature
                         bool fOk = checker.CheckECDSASignature(vchSig, vchPubKey, scriptCode, sigversion);
+
+                        if (vm_limits_active) {
+                            p_metrics->TallySigChecks(1);
+                            if (p_metrics->IsOverOpCostLimit(flags)) {
+                                return set_error(serror, SCRIPT_ERR_OP_COUNT);
+                            }
+                        }
 
                         if (fOk) {
                             isig++;
@@ -1233,10 +1363,15 @@ bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& 
     return set_success(serror);
 }
 
+bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& script, unsigned int flags, const BaseSignatureChecker& checker, SigVersion sigversion, ScriptExecutionData& execdata, ScriptError* serror)
+{
+    return EvalScriptInternal(stack, script, flags, checker, sigversion, execdata, nullptr, serror);
+}
+
 bool EvalScript(std::vector<std::vector<unsigned char> >& stack, const CScript& script, unsigned int flags, const BaseSignatureChecker& checker, SigVersion sigversion, ScriptError* serror)
 {
     ScriptExecutionData execdata;
-    return EvalScript(stack, script, flags, checker, sigversion, execdata, serror);
+    return EvalScriptInternal(stack, script, flags, checker, sigversion, execdata, nullptr, serror);
 }
 
 namespace {
@@ -1615,23 +1750,26 @@ uint256 SignatureHash(const CScript& scriptCode, const T& txTo, unsigned int nIn
         return ss.GetHash();
     }
 
-    if (sigversion == SigVersion::WITNESS_V0) {
+    // FJAR replay-protected signatures use a BIP143-style digest in base scripts
+    // whenever the forkid bit is present.
+    if ((nHashType & SIGHASH_FORKID) != 0 || sigversion == SigVersion::WITNESS_V0) {
         uint256 hashPrevouts;
         uint256 hashSequence;
         uint256 hashOutputs;
         const bool cacheready = cache && cache->m_bip143_segwit_ready;
+        const int32_t base_hash_type = nHashType & ~(SIGHASH_FORKID | SIGHASH_ANYONECANPAY);
 
         if (!(nHashType & SIGHASH_ANYONECANPAY)) {
             hashPrevouts = cacheready ? cache->hashPrevouts : SHA256Uint256(GetPrevoutsSHA256(txTo));
         }
 
-        if (!(nHashType & SIGHASH_ANYONECANPAY) && (nHashType & 0x1f) != SIGHASH_SINGLE && (nHashType & 0x1f) != SIGHASH_NONE) {
+        if (!(nHashType & SIGHASH_ANYONECANPAY) && base_hash_type != SIGHASH_SINGLE && base_hash_type != SIGHASH_NONE) {
             hashSequence = cacheready ? cache->hashSequence : SHA256Uint256(GetSequencesSHA256(txTo));
         }
 
-        if ((nHashType & 0x1f) != SIGHASH_SINGLE && (nHashType & 0x1f) != SIGHASH_NONE) {
+        if (base_hash_type != SIGHASH_SINGLE && base_hash_type != SIGHASH_NONE) {
             hashOutputs = cacheready ? cache->hashOutputs : SHA256Uint256(GetOutputsSHA256(txTo));
-        } else if ((nHashType & 0x1f) == SIGHASH_SINGLE && nIn < txTo.vout.size()) {
+        } else if (base_hash_type == SIGHASH_SINGLE && nIn < txTo.vout.size()) {
             HashWriter inner_ss{};
             inner_ss << txTo.vout[nIn];
             hashOutputs = inner_ss.GetHash();
@@ -1706,6 +1844,47 @@ bool GenericTransactionSignatureChecker<T>::CheckECDSASignature(const std::vecto
         return false;
 
     return true;
+}
+
+template <class T>
+bool GenericTransactionSignatureChecker<T>::CheckCodeQuantumSignature(uint8_t mode, uint8_t algorithm, const std::vector<unsigned char>& wrapped_sig, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const
+{
+    if (mode != CODE_QUANTUM_MODE_V1_WRAPPED_ECDSA) {
+        return false;
+    }
+
+    if (algorithm == CODE_QUANTUM_ALGORITHM_V1_ML_DSA_65) {
+        if (!CODE_QUANTUM_ML_DSA_65_RUNTIME_ENABLED) {
+            return false;
+        }
+        return codequantum::VerifyMLDSA65Signature(wrapped_sig, vchPubKey, scriptCode);
+    }
+
+    if (algorithm == CODE_QUANTUM_ALGORITHM_V1_WRAPPED_ECDSA_DER) {
+        return CheckECDSASignature(wrapped_sig, vchPubKey, scriptCode, sigversion);
+    }
+
+    if (algorithm != CODE_QUANTUM_ALGORITHM_V1_SHA3_256T) {
+        return false;
+    }
+
+    CPubKey pubkey(vchPubKey);
+    if (!pubkey.IsValid()) {
+        return false;
+    }
+
+    std::vector<unsigned char> vchSig(wrapped_sig);
+    if (vchSig.empty()) {
+        return false;
+    }
+    const int nHashType = vchSig.back();
+    vchSig.pop_back();
+
+    if (sigversion == SigVersion::WITNESS_V0 && amount < 0) return HandleMissingData(m_mdb);
+
+    const uint256 legacy_sighash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata, &m_sighash_cache);
+    const uint256 sha3_sighash = HashSHA3_256t(legacy_sighash);
+    return VerifyECDSASignature(vchSig, pubkey, sha3_sighash);
 }
 
 template <class T>
@@ -1824,7 +2003,7 @@ bool GenericTransactionSignatureChecker<T>::CheckSequence(const CScriptNum& nSeq
 template class GenericTransactionSignatureChecker<CTransaction>;
 template class GenericTransactionSignatureChecker<CMutableTransaction>;
 
-static bool ExecuteWitnessScript(const std::span<const valtype>& stack_span, const CScript& exec_script, unsigned int flags, SigVersion sigversion, const BaseSignatureChecker& checker, ScriptExecutionData& execdata, ScriptError* serror)
+static bool ExecuteWitnessScript(const std::span<const valtype>& stack_span, const CScript& exec_script, unsigned int flags, SigVersion sigversion, const BaseSignatureChecker& checker, ScriptExecutionData& execdata, ScriptExecutionMetrics* p_metrics, ScriptError* serror)
 {
     std::vector<valtype> stack{stack_span.begin(), stack_span.end()};
 
@@ -1856,7 +2035,7 @@ static bool ExecuteWitnessScript(const std::span<const valtype>& stack_span, con
     }
 
     // Run the script interpreter.
-    if (!EvalScript(stack, exec_script, flags, checker, sigversion, execdata, serror)) return false;
+    if (!EvalScriptInternal(stack, exec_script, flags, checker, sigversion, execdata, p_metrics, serror)) return false;
 
     // Scripts inside witness implicitly require cleanstack behaviour
     if (stack.size() != 1) return set_error(serror, SCRIPT_ERR_CLEANSTACK);
@@ -1909,7 +2088,7 @@ static bool VerifyTaprootCommitment(const std::vector<unsigned char>& control, c
     return q.CheckTapTweak(p, merkle_root, control[0] & 1);
 }
 
-static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror, bool is_p2sh)
+static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, unsigned int flags, const BaseSignatureChecker& checker, ScriptExecutionMetrics* p_metrics, ScriptError* serror, bool is_p2sh)
 {
     CScript exec_script; //!< Actually executed script (last stack item in P2WSH; implied P2PKH script in P2WPKH; leaf script in P2TR)
     std::span stack{witness.stack};
@@ -1928,14 +2107,14 @@ static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, 
             if (memcmp(hash_exec_script.begin(), program.data(), 32)) {
                 return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
             }
-            return ExecuteWitnessScript(stack, exec_script, flags, SigVersion::WITNESS_V0, checker, execdata, serror);
+            return ExecuteWitnessScript(stack, exec_script, flags, SigVersion::WITNESS_V0, checker, execdata, p_metrics, serror);
         } else if (program.size() == WITNESS_V0_KEYHASH_SIZE) {
             // BIP141 P2WPKH: 20-byte witness v0 program (which encodes Hash160(pubkey))
             if (stack.size() != 2) {
                 return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH); // 2 items in witness
             }
             exec_script << OP_DUP << OP_HASH160 << program << OP_EQUALVERIFY << OP_CHECKSIG;
-            return ExecuteWitnessScript(stack, exec_script, flags, SigVersion::WITNESS_V0, checker, execdata, serror);
+            return ExecuteWitnessScript(stack, exec_script, flags, SigVersion::WITNESS_V0, checker, execdata, p_metrics, serror);
         } else {
             return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WRONG_LENGTH);
         }
@@ -1975,7 +2154,7 @@ static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, 
                 exec_script = CScript(script.begin(), script.end());
                 execdata.m_validation_weight_left = ::GetSerializeSize(witness.stack) + VALIDATION_WEIGHT_OFFSET;
                 execdata.m_validation_weight_left_init = true;
-                return ExecuteWitnessScript(stack, exec_script, flags, SigVersion::TAPSCRIPT, checker, execdata, serror);
+                return ExecuteWitnessScript(stack, exec_script, flags, SigVersion::TAPSCRIPT, checker, execdata, p_metrics, serror);
             }
             if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION) {
                 return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_TAPROOT_VERSION);
@@ -2008,15 +2187,22 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
         return set_error(serror, SCRIPT_ERR_SIG_PUSHONLY);
     }
 
+    ScriptExecutionMetrics vm_metrics;
+    const bool vm_limits_active = IsExplicitCompatFlagsContext(flags) && IsVmLimitsEnabled(flags);
+    if (vm_limits_active) {
+        vm_metrics.SetScriptLimits(flags, scriptSig.size());
+    }
+
     // scriptSig and scriptPubKey must be evaluated sequentially on the same stack
     // rather than being simply concatenated (see CVE-2010-5141)
     std::vector<std::vector<unsigned char> > stack, stackCopy;
-    if (!EvalScript(stack, scriptSig, flags, checker, SigVersion::BASE, serror))
+    ScriptExecutionData execdata;
+    if (!EvalScriptInternal(stack, scriptSig, flags, checker, SigVersion::BASE, execdata, vm_limits_active ? &vm_metrics : nullptr, serror))
         // serror is set
         return false;
     if (flags & SCRIPT_VERIFY_P2SH)
         stackCopy = stack;
-    if (!EvalScript(stack, scriptPubKey, flags, checker, SigVersion::BASE, serror))
+    if (!EvalScriptInternal(stack, scriptPubKey, flags, checker, SigVersion::BASE, execdata, vm_limits_active ? &vm_metrics : nullptr, serror))
         // serror is set
         return false;
     if (stack.empty())
@@ -2034,7 +2220,7 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
                 // The scriptSig must be _exactly_ CScript(), otherwise we reintroduce malleability.
                 return set_error(serror, SCRIPT_ERR_WITNESS_MALLEATED);
             }
-            if (!VerifyWitnessProgram(*witness, witnessversion, witnessprogram, flags, checker, serror, /*is_p2sh=*/false)) {
+            if (!VerifyWitnessProgram(*witness, witnessversion, witnessprogram, flags, checker, vm_limits_active ? &vm_metrics : nullptr, serror, /*is_p2sh=*/false)) {
                 return false;
             }
             // Bypass the cleanstack check at the end. The actual stack is obviously not clean
@@ -2044,7 +2230,7 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
     }
 
     // Additional validation for spend-to-script-hash transactions:
-    if ((flags & SCRIPT_VERIFY_P2SH) && scriptPubKey.IsPayToScriptHash())
+    if ((flags & SCRIPT_VERIFY_P2SH) && (scriptPubKey.IsPayToScriptHash() || scriptPubKey.IsPayToScriptHash32()))
     {
         // scriptSig must be literals-only or validation fails
         if (!scriptSig.IsPushOnly())
@@ -2062,7 +2248,7 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
         CScript pubKey2(pubKeySerialized.begin(), pubKeySerialized.end());
         popstack(stack);
 
-        if (!EvalScript(stack, pubKey2, flags, checker, SigVersion::BASE, serror))
+        if (!EvalScriptInternal(stack, pubKey2, flags, checker, SigVersion::BASE, execdata, vm_limits_active ? &vm_metrics : nullptr, serror))
             // serror is set
             return false;
         if (stack.empty())
@@ -2079,7 +2265,7 @@ bool VerifyScript(const CScript& scriptSig, const CScript& scriptPubKey, const C
                     // reintroduce malleability.
                     return set_error(serror, SCRIPT_ERR_WITNESS_MALLEATED_P2SH);
                 }
-                if (!VerifyWitnessProgram(*witness, witnessversion, witnessprogram, flags, checker, serror, /*is_p2sh=*/true)) {
+                if (!VerifyWitnessProgram(*witness, witnessversion, witnessprogram, flags, checker, vm_limits_active ? &vm_metrics : nullptr, serror, /*is_p2sh=*/true)) {
                     return false;
                 }
                 // Bypass the cleanstack check at the end. The actual stack is obviously not clean

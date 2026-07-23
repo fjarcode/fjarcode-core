@@ -145,6 +145,15 @@ IsMineResult LegacyWalletIsMineInnerDONOTUSE(const LegacyDataSPKM& keystore, con
         }
         break;
     }
+    case TxoutType::SCRIPTHASH32:
+    {
+        uint256 h256{vSolutions[0]};
+        CScript subscript;
+        if (keystore.GetCScriptByHash256(h256, subscript)) {
+            ret = std::max(ret, recurse_scripthash ? LegacyWalletIsMineInnerDONOTUSE(keystore, subscript, IsMineSigVersion::P2SH) : IsMineResult::SPENDABLE);
+        }
+        break;
+    }
     case TxoutType::WITNESS_V0_SCRIPTHASH:
     {
         if (sigversion == IsMineSigVersion::WITNESS_V0) {
@@ -864,7 +873,23 @@ util::Result<CTxDestination> DescriptorScriptPubKeyMan::GetNewDestination(const 
 bool DescriptorScriptPubKeyMan::IsMine(const CScript& script) const
 {
     LOCK(cs_desc_man);
-    return m_map_script_pub_keys.contains(script);
+    if (m_map_script_pub_keys.contains(script)) {
+        return true;
+    }
+
+    // Fallback for Code Quantum alias scripts if cache/index mapping was sparse.
+    std::vector<valtype> solutions;
+    if (Solver(script, solutions) == TxoutType::SCRIPTHASH32 && !solutions.empty() && solutions[0].size() == 32) {
+        const uint256 expected_hash{solutions[0]};
+        for (const auto& [candidate_script, candidate_index] : m_map_script_pub_keys) {
+            (void)candidate_index;
+            if (Hash(candidate_script) == expected_hash) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 bool DescriptorScriptPubKeyMan::CheckDecryptionKey(const CKeyingMaterial& master_key)
@@ -1036,6 +1061,13 @@ bool DescriptorScriptPubKeyMan::TopUpWithDB(WalletBatch& batch, unsigned int siz
         new_spks.insert(scripts_temp.begin(), scripts_temp.end());
         for (const CScript& script : scripts_temp) {
             m_map_script_pub_keys[script] = i;
+
+            // Code Quantum address alias: OP_HASH256 <Hash(script)> OP_EQUAL should map
+            // to the same descriptor index as the canonical script it commits to.
+            const QuantumHash quantum_hash{Hash(script)};
+            const CScript quantum_script = GetScriptForDestination(CTxDestination{quantum_hash});
+            m_map_script_pub_keys[quantum_script] = i;
+            new_spks.insert(quantum_script);
         }
         for (const auto& pk_pair : out_keys.pubkeys) {
             const CPubKey& pubkey = pk_pair.second;
@@ -1207,6 +1239,17 @@ std::unique_ptr<FlatSigningProvider> DescriptorScriptPubKeyMan::GetSigningProvid
     // Find the index of the script
     auto it = m_map_script_pub_keys.find(script);
     if (it == m_map_script_pub_keys.end()) {
+        // Fallback for Code Quantum alias spends: map OP_HASH256 <hash> OP_EQUAL
+        // back to the descriptor index of the canonical script that hashes to <hash>.
+        std::vector<valtype> solutions;
+        if (Solver(script, solutions) == TxoutType::SCRIPTHASH32 && !solutions.empty() && solutions[0].size() == 32) {
+            const uint256 expected_hash{solutions[0]};
+            for (const auto& [candidate_script, candidate_index] : m_map_script_pub_keys) {
+                if (Hash(candidate_script) == expected_hash) {
+                    return GetSigningProvider(candidate_index, include_private);
+                }
+            }
+        }
         return nullptr;
     }
     int32_t index = it->second;
@@ -1248,6 +1291,11 @@ std::unique_ptr<FlatSigningProvider> DescriptorScriptPubKeyMan::GetSigningProvid
         std::vector<CScript> scripts_temp;
         if (!m_wallet_descriptor.descriptor->ExpandFromCache(index, m_wallet_descriptor.cache, scripts_temp, *out_keys)) return nullptr;
 
+        // Ensure HASH256 alias lookups can always recover leaf scripts (e.g. sh32(pkh(...))).
+        for (const CScript& script : scripts_temp) {
+            out_keys->scripts_hash256.emplace(Hash(script), script);
+        }
+
         // Cache SigningProvider so we don't need to re-derive if we need this SigningProvider again
         m_map_signing_providers[index] = *out_keys;
     }
@@ -1256,6 +1304,19 @@ std::unique_ptr<FlatSigningProvider> DescriptorScriptPubKeyMan::GetSigningProvid
         FlatSigningProvider master_provider;
         master_provider.keys = GetKeys();
         m_wallet_descriptor.descriptor->ExpandPrivate(index, master_provider, *out_keys);
+    }
+
+    for (const auto& script_pair : out_keys->scripts) {
+        const CScript& script = script_pair.second;
+        out_keys->scripts_hash256.emplace(Hash(script), script);
+    }
+
+    // Also seed HASH256 lookup from this descriptor index's known script aliases.
+    // This covers cache-hit paths where out_keys->scripts may be sparse.
+    for (const auto& [known_script, known_index] : m_map_script_pub_keys) {
+        if (known_index == index) {
+            out_keys->scripts_hash256.emplace(Hash(known_script), known_script);
+        }
     }
 
     return out_keys;
@@ -1441,6 +1502,13 @@ void DescriptorScriptPubKeyMan::SetCache(const DescriptorCache& cache)
                 throw std::runtime_error(strprintf("Error: Already loaded script at index %d as being at index %d", i, m_map_script_pub_keys[script]));
             }
             m_map_script_pub_keys[script] = i;
+
+            const QuantumHash quantum_hash{Hash(script)};
+            const CScript quantum_script = GetScriptForDestination(CTxDestination{quantum_hash});
+            if (m_map_script_pub_keys.count(quantum_script) == 0) {
+                m_map_script_pub_keys[quantum_script] = i;
+                new_spks.insert(quantum_script);
+            }
         }
         for (const auto& pk_pair : out_keys.pubkeys) {
             const CPubKey& pubkey = pk_pair.second;

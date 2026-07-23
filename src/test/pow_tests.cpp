@@ -60,7 +60,9 @@ BOOST_AUTO_TEST_CASE(get_next_work_lower_limit_actual)
     BOOST_CHECK(PermittedDifficultyTransition(chainParams->GetConsensus(), pindexLast.nHeight+1, pindexLast.nBits, expected_nbits));
     // Test that reducing nbits further would not be a PermittedDifficultyTransition.
     unsigned int invalid_nbits = expected_nbits-1;
-    BOOST_CHECK(!PermittedDifficultyTransition(chainParams->GetConsensus(), pindexLast.nHeight+1, pindexLast.nBits, invalid_nbits));
+    if (!chainParams->GetConsensus().IsASERTActive(pindexLast.nHeight+1)) {
+        BOOST_CHECK(!PermittedDifficultyTransition(chainParams->GetConsensus(), pindexLast.nHeight+1, pindexLast.nBits, invalid_nbits));
+    }
 }
 
 /* Test the constraint on the upper bound for actual time taken */
@@ -77,7 +79,9 @@ BOOST_AUTO_TEST_CASE(get_next_work_upper_limit_actual)
     BOOST_CHECK(PermittedDifficultyTransition(chainParams->GetConsensus(), pindexLast.nHeight+1, pindexLast.nBits, expected_nbits));
     // Test that increasing nbits further would not be a PermittedDifficultyTransition.
     unsigned int invalid_nbits = expected_nbits+1;
-    BOOST_CHECK(!PermittedDifficultyTransition(chainParams->GetConsensus(), pindexLast.nHeight+1, pindexLast.nBits, invalid_nbits));
+    if (!chainParams->GetConsensus().IsASERTActive(pindexLast.nHeight+1)) {
+        BOOST_CHECK(!PermittedDifficultyTransition(chainParams->GetConsensus(), pindexLast.nHeight+1, pindexLast.nBits, invalid_nbits));
+    }
 }
 
 BOOST_AUTO_TEST_CASE(CheckProofOfWork_test_negative_target)
@@ -206,6 +210,60 @@ BOOST_AUTO_TEST_CASE(ChainParams_TESTNET4_sanity)
 BOOST_AUTO_TEST_CASE(ChainParams_SIGNET_sanity)
 {
     sanity_check_chainparams(*m_node.args, ChainType::SIGNET);
+}
+
+BOOST_AUTO_TEST_CASE(asert_on_schedule_is_stable)
+{
+    const auto chainParams = CreateChainParams(*m_node.args, ChainType::MAIN);
+    const auto& consensus = chainParams->GetConsensus();
+
+    arith_uint256 ref_target;
+    ref_target.SetCompact(0x1d00ffff);
+
+    const arith_uint256 pow_limit = UintToArith256(consensus.powLimit);
+    const arith_uint256 result = CalculateASERT(ref_target, 600, 6000, 10, pow_limit, 172800);
+
+    const arith_uint256 diff = (result > ref_target) ? result - ref_target : ref_target - result;
+    BOOST_CHECK(diff < (ref_target / 100));
+}
+
+BOOST_AUTO_TEST_CASE(asert_slow_blocks_raise_target)
+{
+    const auto chainParams = CreateChainParams(*m_node.args, ChainType::MAIN);
+    const auto& consensus = chainParams->GetConsensus();
+
+    arith_uint256 ref_target;
+    ref_target.SetCompact(0x1c0fffff);
+
+    const arith_uint256 pow_limit = UintToArith256(consensus.powLimit);
+    const arith_uint256 result = CalculateASERT(ref_target, 600, 12000, 10, pow_limit, 172800);
+    BOOST_CHECK(result > ref_target);
+}
+
+BOOST_AUTO_TEST_CASE(asert_fast_blocks_lower_target)
+{
+    const auto chainParams = CreateChainParams(*m_node.args, ChainType::MAIN);
+    const auto& consensus = chainParams->GetConsensus();
+
+    arith_uint256 ref_target;
+    ref_target.SetCompact(0x1c0fffff);
+
+    const arith_uint256 pow_limit = UintToArith256(consensus.powLimit);
+    const arith_uint256 result = CalculateASERT(ref_target, 600, 3000, 10, pow_limit, 172800);
+    BOOST_CHECK(result < ref_target);
+}
+
+BOOST_AUTO_TEST_CASE(asert_clamps_to_pow_limit)
+{
+    const auto chainParams = CreateChainParams(*m_node.args, ChainType::MAIN);
+    const auto& consensus = chainParams->GetConsensus();
+
+    arith_uint256 ref_target;
+    ref_target.SetCompact(0x1d00ffff);
+
+    const arith_uint256 pow_limit = UintToArith256(consensus.powLimit);
+    const arith_uint256 result = CalculateASERT(ref_target, 600, 1728000 + 1200, 1, pow_limit, 172800);
+    BOOST_CHECK(result == pow_limit);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

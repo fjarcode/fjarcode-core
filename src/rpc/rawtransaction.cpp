@@ -548,6 +548,7 @@ static RPCHelpMan decodescript()
             break;
         case TxoutType::NULL_DATA:
         case TxoutType::SCRIPTHASH:
+        case TxoutType::SCRIPTHASH32:
         case TxoutType::WITNESS_UNKNOWN:
         case TxoutType::WITNESS_V1_TAPROOT:
         case TxoutType::ANCHOR:
@@ -589,6 +590,7 @@ static RPCHelpMan decodescript()
                 return true;
             case TxoutType::NULL_DATA:
             case TxoutType::SCRIPTHASH:
+            case TxoutType::SCRIPTHASH32:
             case TxoutType::WITNESS_UNKNOWN:
             case TxoutType::WITNESS_V0_KEYHASH:
             case TxoutType::WITNESS_V0_SCRIPTHASH:

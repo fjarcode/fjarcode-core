@@ -1595,18 +1595,11 @@ bool CWallet::IsMine(const CTxDestination& dest) const
 bool CWallet::IsMine(const CScript& script) const
 {
     AssertLockHeld(cs_wallet);
-
-    // Search the cache so that IsMine is called only on the relevant SPKMs instead of on everything in m_spk_managers
-    const auto& it = m_cached_spks.find(script);
-    if (it != m_cached_spks.end()) {
-        bool res = false;
-        for (const auto& spkm : it->second) {
-            res = res || spkm->IsMine(script);
+    for (const auto& spkm : GetScriptPubKeyMans(script)) {
+        if (spkm->IsMine(script)) {
+            return true;
         }
-        Assume(res);
-        return res;
     }
-
     return false;
 }
 
@@ -2110,6 +2103,29 @@ bool CWallet::SignTransaction(CMutableTransaction& tx) const
 
 bool CWallet::SignTransaction(CMutableTransaction& tx, const std::map<COutPoint, Coin>& coins, int sighash, std::map<int, bilingual_str>& input_errors) const
 {
+    const bool quantum_signing_enabled = gArgs.GetBoolArg("-enablecodequantumsigning", DEFAULT_ENABLE_CODE_QUANTUM_SIGNING);
+    std::vector<unsigned int> quantum_input_indexes;
+    quantum_input_indexes.reserve(tx.vin.size());
+    for (unsigned int i = 0; i < tx.vin.size(); ++i) {
+        const auto coin_it = coins.find(tx.vin[i].prevout);
+        if (coin_it == coins.end() || coin_it->second.IsSpent()) {
+            continue;
+        }
+        std::vector<std::vector<unsigned char>> solutions;
+        if (Solver(coin_it->second.out.scriptPubKey, solutions) == TxoutType::SCRIPTHASH32) {
+            quantum_input_indexes.push_back(i);
+        }
+    }
+
+    if (!quantum_signing_enabled) {
+        for (const unsigned int input_index : quantum_input_indexes) {
+            input_errors[input_index] = Untranslated("Code Quantum input signing is disabled (-enablecodequantumsigning=1 to enable)");
+        }
+        if (!quantum_input_indexes.empty()) {
+            return false;
+        }
+    }
+
     // Try to sign with all ScriptPubKeyMans
     for (ScriptPubKeyMan* spk_man : GetAllScriptPubKeyMans()) {
         // spk_man->SignTransaction will return true if the transaction is complete,
@@ -3378,6 +3394,20 @@ std::set<ScriptPubKeyMan*> CWallet::GetScriptPubKeyMans(const CScript& script) c
     if (it != m_cached_spks.end()) {
         spk_mans.insert(it->second.begin(), it->second.end());
     }
+
+    // Fallback path for Code Quantum aliases in case wallet/SPKM script caches are stale.
+    if (spk_mans.empty()) {
+        std::vector<std::vector<unsigned char>> solutions;
+        if (Solver(script, solutions) == TxoutType::SCRIPTHASH32) {
+            for (const auto& [id, spkm] : m_spk_managers) {
+                (void)id;
+                if (spkm->IsMine(script)) {
+                    spk_mans.insert(spkm.get());
+                }
+            }
+        }
+    }
+
     SignatureData sigdata;
     Assume(std::all_of(spk_mans.begin(), spk_mans.end(), [&script, &sigdata](ScriptPubKeyMan* spkm) { return spkm->CanProvide(script, sigdata); }));
 
@@ -3400,12 +3430,11 @@ std::unique_ptr<SigningProvider> CWallet::GetSolvingProvider(const CScript& scri
 
 std::unique_ptr<SigningProvider> CWallet::GetSolvingProvider(const CScript& script, SignatureData& sigdata) const
 {
-    // Search the cache for relevant SPKMs instead of iterating m_spk_managers
-    const auto& it = m_cached_spks.find(script);
-    if (it != m_cached_spks.end()) {
-        // All spkms for a given script must already be able to make a SigningProvider for the script, so just return the first one.
-        Assume(it->second.at(0)->CanProvide(script, sigdata));
-        return it->second.at(0)->GetSolvingProvider(script);
+    const auto spk_mans = GetScriptPubKeyMans(script);
+    for (auto* spkm : spk_mans) {
+        if (spkm->CanProvide(script, sigdata)) {
+            return spkm->GetSolvingProvider(script);
+        }
     }
 
     return nullptr;

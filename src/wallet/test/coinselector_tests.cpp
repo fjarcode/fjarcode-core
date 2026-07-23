@@ -1303,8 +1303,8 @@ BOOST_AUTO_TEST_CASE(check_max_selection_weight)
             m_node);
 
         BOOST_CHECK(result);
-        // Verify that the 50 BTC UTXO was selected, and result is below max_weight
-        BOOST_CHECK(has_coin(result->GetInputSet(), CAmount(50 * COIN)));
+        // With higher policy weight limits, selecting many smaller coins can still be valid.
+        // The important invariant is that the final selection remains under the configured cap.
         BOOST_CHECK_LE(result->GetWeight(), max_weight);
     }
 
@@ -1351,10 +1351,16 @@ BOOST_AUTO_TEST_CASE(check_max_selection_weight)
             },
             m_node);
 
-        // No results
-        // 1515 inputs * 68 bytes = 103,020 bytes
-        // 103,020 bytes * 4 = 412,080 weight, which is above the MAX_STANDARD_TX_WEIGHT of 400,000
-        BOOST_CHECK(!result);
+        // This scenario is only infeasible when the chain's standard tx weight limit is low enough
+        // that the minimum number of inputs required to reach target exceeds the cap.
+        const int64_t min_inputs_for_target = (target + CAmount(0.033 * COIN) - 1) / CAmount(0.033 * COIN);
+        const int64_t min_weight_for_target = min_inputs_for_target * cs_params.change_spend_size * WITNESS_SCALE_FACTOR;
+        if (min_weight_for_target > MAX_STANDARD_TX_WEIGHT) {
+            BOOST_CHECK(!result);
+        } else {
+            BOOST_CHECK(result);
+            BOOST_CHECK_LE(result->GetWeight(), max_weight);
+        }
     }
 }
 

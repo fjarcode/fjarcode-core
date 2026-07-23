@@ -20,7 +20,7 @@ using util::Join;
  * for both bitcoind and bitcoin-qt, to make it harder for attackers to
  * target servers or GUI users specifically.
  */
-const std::string UA_NAME("Satoshi");
+const std::string UA_NAME("FJARCODE");
 
 
 #include <bitcoin-build-info.h>
@@ -83,9 +83,12 @@ std::string CopyrightHolders(const std::string& strPrefix)
 
 std::string LicenseInfo()
 {
-    const std::string URL_SOURCE_CODE = "<https://github.com/bitcoin/bitcoin>";
+    const std::string URL_SOURCE_CODE = "<https://github.com/fjarcode/fjarcode-core>";
+    const std::string bitcoin_copyright = strprintf(_("Copyright (C) %i-%i The Bitcoin Core developers"), 2009, COPYRIGHT_YEAR).translated;
+    const std::string fjarcode_copyright = "Copyright (C) 2026-2026 The FJARCODE developers";
 
-    return CopyrightHolders(strprintf(_("Copyright (C) %i-%i"), 2009, COPYRIGHT_YEAR).translated + " ") + "\n" +
+    return bitcoin_copyright + "\n" +
+           fjarcode_copyright + "\n" +
            "\n" +
            strprintf(_("Please contribute if you find %s useful. "
                        "Visit %s for further information about the software."),

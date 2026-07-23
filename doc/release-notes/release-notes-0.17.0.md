@@ -763,7 +763,7 @@ Support for Python 2 has been discontinued for all test files and tools.
 - #13663 `cbc9b50` Avoid read/write to default datadir (MarcoFalke)
 - #13682 `f8a32a3` bench: Remove unused variable (practicalswift)
 - #13638 `6fcdb5e` Use `MAX_SCRIPT_ELEMENT_SIZE` from script.py (domob1812)
-- #13687 `9d26b69` travis: Check that ~/.bitcoin is never created (MarcoFalke)
+- #13687 `9d26b69` travis: Check that ~/.fjarcode is never created (MarcoFalke)
 - #13715 `e1260a7` fixes mininode's P2PConnection sending messages on closing transport (marcoagner)
 - #13729 `aa9429a` travis: Avoid unnecessarily setting env variables on the lint build (Empact)
 - #13747 `ab28b5b` Skip P2PConnection's `is_closing()` check when not available (domob1812)

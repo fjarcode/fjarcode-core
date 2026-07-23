@@ -54,23 +54,42 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOUIC_SEARCH_PATHS forms)
 
+set(FJARCODE_QT_ICON_DIR "${CMAKE_CURRENT_SOURCE_DIR}/res/icons")
+set(FJARCODE_REQUIRED_ICONS_COMMON fjarcode.png)
+set(FJARCODE_REQUIRED_ICONS_DARWIN fjarcode.icns)
+set(FJARCODE_REQUIRED_ICONS_WINDOWS fjarcode.ico fjarcode_testnet.ico fjarcode_signet.ico)
+
+set(FJARCODE_REQUIRED_ICONS ${FJARCODE_REQUIRED_ICONS_COMMON})
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  list(APPEND FJARCODE_REQUIRED_ICONS ${FJARCODE_REQUIRED_ICONS_DARWIN})
+endif()
+if(WIN32)
+  list(APPEND FJARCODE_REQUIRED_ICONS ${FJARCODE_REQUIRED_ICONS_WINDOWS})
+endif()
+
+foreach(required_icon IN LISTS FJARCODE_REQUIRED_ICONS)
+  if(NOT EXISTS "${FJARCODE_QT_ICON_DIR}/${required_icon}")
+    message(FATAL_ERROR "Missing required icon asset: ${FJARCODE_QT_ICON_DIR}/${required_icon}")
+  endif()
+endforeach()
+
 configure_file(bitcoin_locale.qrc bitcoin_locale.qrc USE_SOURCE_PERMISSIONS COPYONLY)
 
-# The bitcoinqt sources have to include headers in
+# The fjarcodeqt sources have to include headers in
 # order to parse them to collect translatable strings.
-add_library(bitcoinqt STATIC EXCLUDE_FROM_ALL
+add_library(fjarcodeqt STATIC EXCLUDE_FROM_ALL
   bantablemodel.cpp
   bantablemodel.h
-  bitcoin.cpp
-  bitcoin.h
-  bitcoinaddressvalidator.cpp
-  bitcoinaddressvalidator.h
-  bitcoinamountfield.cpp
-  bitcoinamountfield.h
-  bitcoingui.cpp
-  bitcoingui.h
-  bitcoinunits.cpp
-  bitcoinunits.h
+  fjarcode.cpp
+  fjarcode.h
+  fjarcodeaddressvalidator.cpp
+  fjarcodeaddressvalidator.h
+  fjarcodeamountfield.cpp
+  fjarcodeamountfield.h
+  fjarcodegui.cpp
+  fjarcodegui.h
+  fjarcodeunits.cpp
+  fjarcodeunits.h
   clientmodel.cpp
   clientmodel.h
   csvmodelwriter.cpp
@@ -119,15 +138,15 @@ add_library(bitcoinqt STATIC EXCLUDE_FROM_ALL
   utilitydialog.h
   $<$<PLATFORM_ID:Windows>:winshutdownmonitor.cpp>
   $<$<PLATFORM_ID:Windows>:winshutdownmonitor.h>
-  bitcoin.qrc
+  fjarcode.qrc
   ${CMAKE_CURRENT_BINARY_DIR}/bitcoin_locale.qrc
 )
-target_compile_definitions(bitcoinqt
+target_compile_definitions(fjarcodeqt
   PUBLIC
     QT_NO_KEYWORDS
     QT_USE_QSTRINGBUILDER
 )
-target_include_directories(bitcoinqt
+target_include_directories(fjarcodeqt
   PUBLIC
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>
 )
@@ -135,12 +154,12 @@ set_property(SOURCE macnotificationhandler.mm
   # Ignore warnings "'NSUserNotificationCenter' is deprecated: first deprecated in macOS 11.0".
   APPEND PROPERTY COMPILE_OPTIONS -Wno-deprecated-declarations
 )
-target_link_libraries(bitcoinqt
+target_link_libraries(fjarcodeqt
   PUBLIC
     Qt6::Widgets
   PRIVATE
     core_interface
-    bitcoin_cli
+    fjarcode_cli
     leveldb
     Boost::headers
     $<TARGET_NAME_IF_EXISTS:QRencode::QRencode>
@@ -149,7 +168,7 @@ target_link_libraries(bitcoinqt
 )
 
 if(ENABLE_WALLET)
-  target_sources(bitcoinqt
+  target_sources(fjarcodeqt
     PRIVATE
       addressbookpage.cpp
       addressbookpage.h
@@ -212,21 +231,21 @@ if(ENABLE_WALLET)
       walletview.cpp
       walletview.h
   )
-  target_link_libraries(bitcoinqt
+  target_link_libraries(fjarcodeqt
     PRIVATE
-      bitcoin_wallet
+      fjarcode_wallet
       Qt6::Network
   )
 endif()
 
 if(WITH_DBUS)
-  target_link_libraries(bitcoinqt PRIVATE Qt6::DBus)
+  target_link_libraries(fjarcodeqt PRIVATE Qt6::DBus)
 endif()
 
 if(qt_lib_type STREQUAL "STATIC_LIBRARY")
   # We want to define static plugins to link ourselves, thus preventing
   # automatic linking against a "sane" set of default static plugins.
-  qt6_import_plugins(bitcoinqt
+  qt6_import_plugins(fjarcodeqt
     EXCLUDE_BY_TYPE
       accessiblebridge
       platforms
@@ -247,41 +266,41 @@ endif()
 
 add_subdirectory(locale)
 
-add_executable(bitcoin-qt
+add_executable(fjarcode-qt
   main.cpp
   ../init/bitcoin-qt.cpp
 )
 
-add_windows_resources(bitcoin-qt res/bitcoin-qt-res.rc)
-add_windows_application_manifest(bitcoin-qt)
+add_windows_resources(fjarcode-qt res/fjarcode-qt-res.rc)
+add_windows_application_manifest(fjarcode-qt)
 
-target_link_libraries(bitcoin-qt
+target_link_libraries(fjarcode-qt
   core_interface
-  bitcoinqt
-  bitcoin_node
+  fjarcodeqt
+  fjarcode_node
 )
 
-import_plugins(bitcoin-qt)
-install_binary_component(bitcoin-qt HAS_MANPAGE)
+import_plugins(fjarcode-qt)
+install_binary_component(fjarcode-qt HAS_MANPAGE)
 if(WIN32)
-  set_target_properties(bitcoin-qt PROPERTIES WIN32_EXECUTABLE TRUE)
+  set_target_properties(fjarcode-qt PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
 
 if(ENABLE_IPC)
-  add_executable(bitcoin-gui
+  add_executable(fjarcode-gui
     main.cpp
     ../init/bitcoin-gui.cpp
   )
-  target_link_libraries(bitcoin-gui
+  target_link_libraries(fjarcode-gui
     core_interface
-    bitcoinqt
-    bitcoin_node
-    bitcoin_ipc
+    fjarcodeqt
+    fjarcode_node
+    fjarcode_ipc
   )
-  import_plugins(bitcoin-gui)
-  install_binary_component(bitcoin-gui INTERNAL)
+  import_plugins(fjarcode-gui)
+  install_binary_component(fjarcode-gui INTERNAL)
   if(WIN32)
-    set_target_properties(bitcoin-gui PROPERTIES WIN32_EXECUTABLE TRUE)
+    set_target_properties(fjarcode-gui PROPERTIES WIN32_EXECUTABLE TRUE)
   endif()
 endif()
 

@@ -6,7 +6,7 @@
 
 #include <qt/optionsmodel.h>
 
-#include <qt/bitcoinunits.h>
+#include <qt/fjarcodeunits.h>
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
 

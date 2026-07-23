@@ -132,6 +132,7 @@ public:
 
     bool bumpFee(Txid hash, Txid& new_hash);
     void displayAddress(std::string sAddress) const;
+    bool getNewQuantumAddress(const QString& label, QString& address_out, QString& error_out) const;
 
     static bool isWalletEnabled();
 

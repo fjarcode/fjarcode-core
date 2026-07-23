@@ -9,8 +9,8 @@
 #include <interfaces/chain.h>
 #include <interfaces/node.h>
 #include <key_io.h>
-#include <qt/bitcoinamountfield.h>
-#include <qt/bitcoinunits.h>
+#include <qt/fjarcodeamountfield.h>
+#include <qt/fjarcodeunits.h>
 #include <qt/clientmodel.h>
 #include <qt/optionsmodel.h>
 #include <qt/overviewpage.h>
@@ -32,12 +32,14 @@
 
 #include <chrono>
 #include <memory>
+#include <variant>
 
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
+#include <QComboBox>
 #include <QObject>
 #include <QPushButton>
 #include <QTimer>
@@ -260,9 +262,9 @@ public:
 //
 // This also requires overriding the default minimal Qt platform:
 //
-//     QT_QPA_PLATFORM=xcb     build/bin/test_bitcoin-qt  # Linux
-//     QT_QPA_PLATFORM=windows build/bin/test_bitcoin-qt  # Windows
-//     QT_QPA_PLATFORM=cocoa   build/bin/test_bitcoin-qt  # macOS
+//     QT_QPA_PLATFORM=xcb     build/bin/test_fjarcode-qt  # Linux
+//     QT_QPA_PLATFORM=windows build/bin/test_fjarcode-qt  # Windows
+//     QT_QPA_PLATFORM=cocoa   build/bin/test_fjarcode-qt  # macOS
 void TestGUI(interfaces::Node& node, const std::shared_ptr<CWallet>& wallet)
 {
     // Create widgets for sending coins and listing transactions.
@@ -308,6 +310,9 @@ void TestGUI(interfaces::Node& node, const std::shared_ptr<CWallet>& wallet)
     ReceiveCoinsDialog receiveCoinsDialog(platformStyle.get());
     receiveCoinsDialog.setModel(&walletModel);
     RecentRequestsTableModel* requestTableModel = walletModel.getRecentRequestsTableModel();
+    QComboBox* addressType = receiveCoinsDialog.findChild<QComboBox*>("addressType");
+    QVERIFY(addressType);
+    QCOMPARE(addressType->currentData().toInt(), static_cast<int>(AddressFormat::QUANTUM));
 
     // Label input
     QLineEdit* labelInput = receiveCoinsDialog.findChild<QLineEdit*>("reqLabel");
@@ -330,21 +335,25 @@ void TestGUI(interfaces::Node& node, const std::shared_ptr<CWallet>& wallet)
             QCOMPARE(receiveRequestDialog->QObject::findChild<QLabel*>("payment_header")->text(), QString("Payment information"));
             QCOMPARE(receiveRequestDialog->QObject::findChild<QLabel*>("uri_tag")->text(), QString("URI:"));
             QString uri = receiveRequestDialog->QObject::findChild<QLabel*>("uri_content")->text();
-            QCOMPARE(uri.count("bitcoin:"), 2);
+            QCOMPARE(uri.count("fjarcode:"), 1);
             QCOMPARE(receiveRequestDialog->QObject::findChild<QLabel*>("address_tag")->text(), QString("Address:"));
             QVERIFY(address.isEmpty());
             address = receiveRequestDialog->QObject::findChild<QLabel*>("address_content")->text();
             QVERIFY(!address.isEmpty());
+            QVERIFY(address.startsWith("fjarcoderegtest:"));
 
-            QCOMPARE(uri.count("amount=0.00000001"), 2);
+            const CTxDestination parsed_dest = DecodeDestination(address.toStdString());
+            QVERIFY(std::holds_alternative<QuantumHash>(parsed_dest));
+
+            QCOMPARE(uri.count("amount=0.00000001"), 1);
             QCOMPARE(receiveRequestDialog->QObject::findChild<QLabel*>("amount_tag")->text(), QString("Amount:"));
             QCOMPARE(receiveRequestDialog->QObject::findChild<QLabel*>("amount_content")->text(), QString::fromStdString("0.00000001 " + CURRENCY_UNIT));
 
-            QCOMPARE(uri.count("label=TEST_LABEL_1"), 2);
+            QCOMPARE(uri.count("label=TEST_LABEL_1"), 1);
             QCOMPARE(receiveRequestDialog->QObject::findChild<QLabel*>("label_tag")->text(), QString("Label:"));
             QCOMPARE(receiveRequestDialog->QObject::findChild<QLabel*>("label_content")->text(), QString("TEST_LABEL_1"));
 
-            QCOMPARE(uri.count("message=TEST_MESSAGE_1"), 2);
+            QCOMPARE(uri.count("message=TEST_MESSAGE_1"), 1);
             QCOMPARE(receiveRequestDialog->QObject::findChild<QLabel*>("message_tag")->text(), QString("Message:"));
             QCOMPARE(receiveRequestDialog->QObject::findChild<QLabel*>("message_content")->text(), QString("TEST_MESSAGE_1"));
         }
@@ -468,7 +477,7 @@ void WalletTests::walletTests()
         // and fails to handle returned nulls
         // (https://bugreports.qt.io/browse/QTBUG-49686).
         qWarning() << "Skipping WalletTests on mac build with 'minimal' platform set due to Qt bugs. To run AppTests, invoke "
-                      "with 'QT_QPA_PLATFORM=cocoa test_bitcoin-qt' on mac, or else use a linux or windows build.";
+                      "with 'QT_QPA_PLATFORM=cocoa test_fjarcode-qt' on mac, or else use a linux or windows build.";
         return;
     }
 #endif

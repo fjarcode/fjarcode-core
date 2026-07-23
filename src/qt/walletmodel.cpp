@@ -34,6 +34,9 @@
 #include <QMessageBox>
 #include <QSet>
 #include <QTimer>
+#include <QUrl>
+
+#include <univalue.h>
 
 using wallet::CCoinControl;
 using wallet::CRecipient;
@@ -369,7 +372,7 @@ static void NotifyAddressBookChanged(WalletModel *walletmodel,
         const CTxDestination &address, const std::string &label, bool isMine,
         wallet::AddressPurpose purpose, ChangeType status)
 {
-    QString strAddress = QString::fromStdString(EncodeDestination(address));
+    QString strAddress = GUIUtil::DisplayAddress(address);
     QString strLabel = QString::fromStdString(label);
 
     qDebug() << "NotifyAddressBookChanged: " + strAddress + " " + strLabel + " isMine=" + QString::number(isMine) + " purpose=" + QString::number(static_cast<uint8_t>(purpose)) + " status=" + QString::number(status);
@@ -564,6 +567,35 @@ void WalletModel::displayAddress(std::string sAddress) const
         }
     } catch (const std::runtime_error& e) {
         QMessageBox::critical(nullptr, tr("Can't display address"), e.what());
+    }
+}
+
+bool WalletModel::getNewQuantumAddress(const QString& label, QString& address_out, QString& error_out) const
+{
+    try {
+        UniValue params(UniValue::VARR);
+        params.push_back(label.toStdString());
+
+        const QByteArray encoded_name = QUrl::toPercentEncoding(getWalletName());
+        const std::string uri = "/wallet/" + std::string(encoded_name.constData(), encoded_name.length());
+        UniValue result = m_node.executeRpc("getnewquantumaddress", params, uri);
+
+        if (!result.isStr()) {
+            error_out = tr("Quantum address RPC returned an unexpected result type.");
+            return false;
+        }
+
+        address_out = QString::fromStdString(result.get_str());
+        if (address_out.isEmpty()) {
+            error_out = tr("Quantum address RPC returned an empty address.");
+            return false;
+        }
+
+        error_out.clear();
+        return true;
+    } catch (const std::exception& e) {
+        error_out = QString::fromStdString(e.what());
+        return false;
     }
 }
 

@@ -51,13 +51,11 @@ CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
     // satisfaction is lower (a single BIP340 signature) but this computation was
     // kept to not further reduce the dust level.
     // See discussion in https://github.com/bitcoin/bitcoin/pull/22779 for details.
-    if (txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram)) {
-        // sum the sizes of the parts of a transaction input
-        // with 75% segwit discount applied to the script size.
-        nSize += (32 + 4 + 1 + (107 / WITNESS_SCALE_FACTOR) + 4);
-    } else {
-        nSize += (32 + 4 + 1 + 107 + 4); // the 148 mentioned above
-    }
+    const bool is_witness_program = txout.scriptPubKey.IsWitnessProgram(witnessversion, witnessprogram);
+    // Sum the sizes of the parts of a transaction input. Witness programs apply
+    // witness discount to the script size; non-witness programs use full size.
+    const size_t script_size = is_witness_program ? (107 / WITNESS_SCALE_FACTOR) : 107;
+    nSize += (32 + 4 + 1 + script_size + 4); // 148 bytes for the non-witness case
 
     return dustRelayFeeIn.GetFee(nSize);
 }

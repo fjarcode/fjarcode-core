@@ -11,7 +11,7 @@
 #include <node/psbt.h>
 #include <node/types.h>
 #include <policy/policy.h>
-#include <qt/bitcoinunits.h>
+#include <qt/fjarcodeunits.h>
 #include <qt/forms/ui_psbtoperationsdialog.h>
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
@@ -152,7 +152,7 @@ void PSBTOperationsDialog::saveTransaction() {
         CTxDestination address;
         ExtractDestination(out.scriptPubKey, address);
         QString amount = BitcoinUnits::format(m_client_model->getOptionsModel()->getDisplayUnit(), out.nValue);
-        QString address_str = QString::fromStdString(EncodeDestination(address));
+        QString address_str = GUIUtil::DisplayAddress(address);
         filename_suggestion.append(address_str + "-" + amount);
         first = false;
     }
@@ -186,7 +186,7 @@ QString PSBTOperationsDialog::renderTransaction(const PartiallySignedTransaction
         totalAmount += out.nValue;
         tx_description.append(bullet_point).append(tr("Sends %1 to %2")
             .arg(BitcoinUnits::formatWithUnit(BitcoinUnit::BTC, out.nValue))
-            .arg(QString::fromStdString(EncodeDestination(address))));
+            .arg(GUIUtil::DisplayAddress(address)));
         // Check if the address is one of ours
         if (m_wallet_model != nullptr && m_wallet_model->wallet().txoutIsMine(out)) tx_description.append(" (" + tr("own address") + ")");
         tx_description.append("<br>");

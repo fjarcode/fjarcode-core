@@ -22,6 +22,7 @@ std::string GetTxnOutputType(TxoutType t)
     case TxoutType::PUBKEY: return "pubkey";
     case TxoutType::PUBKEYHASH: return "pubkeyhash";
     case TxoutType::SCRIPTHASH: return "scripthash";
+    case TxoutType::SCRIPTHASH32: return "scripthash32";
     case TxoutType::MULTISIG: return "multisig";
     case TxoutType::NULL_DATA: return "nulldata";
     case TxoutType::ANCHOR: return "anchor";
@@ -149,6 +150,14 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
         std::vector<unsigned char> hashBytes(scriptPubKey.begin()+2, scriptPubKey.begin()+22);
         vSolutionsRet.push_back(hashBytes);
         return TxoutType::SCRIPTHASH;
+    }
+
+    // OP_HASH256 <32-byte hash> OP_EQUAL
+    if (scriptPubKey.IsPayToScriptHash32())
+    {
+        std::vector<unsigned char> hashBytes(scriptPubKey.begin() + 2, scriptPubKey.begin() + 34);
+        vSolutionsRet.push_back(hashBytes);
+        return TxoutType::SCRIPTHASH32;
     }
 
     int witnessversion;

@@ -11,26 +11,141 @@
 #include <uint256.h>
 #include <util/check.h>
 
+#include <cstdlib>
+
+arith_uint256 CalculateASERT(const arith_uint256& ref_target,
+                             int64_t n_pow_target_spacing,
+                             int64_t n_time_diff,
+                             int64_t n_height_diff,
+                             const arith_uint256& pow_limit,
+                             int64_t n_half_life) noexcept
+{
+    assert(ref_target > 0 && ref_target <= pow_limit);
+    // ASERT arithmetic needs the reference target to stay within 224 bits.
+    assert((ref_target >> 224) == 0);
+    assert(n_height_diff >= 0);
+    assert(std::llabs(n_time_diff - n_pow_target_spacing * n_height_diff) < (1ll << (63 - 16)));
+
+    const int64_t exponent =
+        ((n_time_diff - n_pow_target_spacing * (n_height_diff + 1)) * 65536) / n_half_life;
+
+    static_assert(int64_t(-1) >> 1 == int64_t(-1),
+                  "ASERT algorithm requires arithmetic right-shifts");
+
+    int64_t shifts = exponent >> 16;
+    const auto frac = uint16_t(exponent);
+    assert(exponent == (shifts * 65536) + frac);
+
+    const uint32_t factor = 65536 +
+                            ((195766423245049ull * frac +
+                              971821376ull * frac * frac +
+                              5127ull * frac * frac * frac +
+                              (1ull << 47)) >>
+                             48);
+
+    arith_uint256 next_target = ref_target * factor;
+
+    shifts -= 16;
+    if (shifts <= 0) {
+        next_target >>= -shifts;
+    } else {
+        const auto next_target_shifted = next_target << shifts;
+        if ((next_target_shifted >> shifts) != next_target) {
+            next_target = pow_limit;
+        } else {
+            next_target = next_target_shifted;
+        }
+    }
+
+    if (next_target == 0) {
+        next_target = arith_uint256(1);
+    } else if (next_target > pow_limit) {
+        next_target = pow_limit;
+    }
+
+    return next_target;
+}
+
 unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params& params)
 {
     assert(pindexLast != nullptr);
     unsigned int nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
+    const int nNextHeight = pindexLast->nHeight + 1;
+    const int64_t nTargetSpacing = params.GetPowTargetSpacing(nNextHeight);
+
+    // Mining-on-demand networks should always mine at powLimit.
+    if (params.fPowNoRetargeting) {
+        return nProofOfWorkLimit;
+    }
+
+    // Force deterministic difficulty exactly at SHA3 activation boundary.
+    if (nNextHeight == params.SHA3Height) {
+        arith_uint256 bnNew;
+        bnNew.SetCompact(params.nBitsSHA3Height);
+        return bnNew.GetCompact();
+    }
+
+    if (params.IsASERTActive(nNextHeight) && params.asertAnchorParams && !params.fPowNoRetargeting) {
+        int anchorHeight = params.asertAnchorParams->nHeight;
+        uint32_t anchorBits = params.asertAnchorParams->nBits;
+        int64_t anchorParentTime = params.asertAnchorParams->nPrevBlockTime;
+
+        // After SHA3 activation, restart ASERT schedule from SHA3 boundary.
+        if (params.IsSHA3Active(nNextHeight) && nNextHeight > params.SHA3Height) {
+            anchorHeight = params.SHA3Height;
+            anchorBits = params.nBitsSHA3Height;
+            const CBlockIndex* pForkParent = pindexLast->GetAncestor(anchorHeight - 1);
+            if (!pForkParent) return nProofOfWorkLimit;
+            anchorParentTime = pForkParent->GetBlockTime();
+        }
+
+        if (nNextHeight == anchorHeight) {
+            return anchorBits;
+        }
+        if (nNextHeight < anchorHeight) {
+            return nProofOfWorkLimit;
+        }
+
+        if (anchorParentTime == 0 && anchorHeight > 0) {
+            const CBlockIndex* pAnchorParent = pindexLast->GetAncestor(anchorHeight - 1);
+            if (!pAnchorParent) return nProofOfWorkLimit;
+            anchorParentTime = pAnchorParent->GetBlockTime();
+        }
+        if (anchorParentTime == 0) return nProofOfWorkLimit;
+
+        arith_uint256 refTarget;
+        refTarget.SetCompact(anchorBits);
+
+        const int64_t nTimeDiff = pindexLast->GetBlockTime() - anchorParentTime;
+        const int64_t nHeightDiff = pindexLast->nHeight - anchorHeight;
+
+        const arith_uint256 nextTarget = CalculateASERT(
+            refTarget,
+            nTargetSpacing,
+            nTimeDiff,
+            nHeightDiff,
+            UintToArith256(params.powLimit),
+            params.GetASERTHalfLife(nNextHeight));
+
+        return nextTarget.GetCompact();
+    }
 
     // Only change once per difficulty adjustment interval
-    if ((pindexLast->nHeight+1) % params.DifficultyAdjustmentInterval() != 0)
+    const int64_t nDifficultyAdjustmentInterval = params.DifficultyAdjustmentInterval(nNextHeight);
+    if ((pindexLast->nHeight+1) % nDifficultyAdjustmentInterval != 0)
     {
         if (params.fPowAllowMinDifficultyBlocks)
         {
             // Special difficulty rule for testnet:
             // If the new block's timestamp is more than 2* 10 minutes
             // then it MUST be a min-difficulty block.
-            if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing*2)
+            if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + nTargetSpacing*2)
                 return nProofOfWorkLimit;
             else
             {
                 // Return the last non-special-min-difficulty-rules-block
                 const CBlockIndex* pindex = pindexLast;
-                while (pindex->pprev && pindex->nHeight % params.DifficultyAdjustmentInterval() != 0 && pindex->nBits == nProofOfWorkLimit)
+                while (pindex->pprev && pindex->nHeight % nDifficultyAdjustmentInterval != 0 && pindex->nBits == nProofOfWorkLimit)
                     pindex = pindex->pprev;
                 return pindex->nBits;
             }
@@ -39,7 +154,7 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     }
 
     // Go back by what we want to be 14 days worth of blocks
-    int nHeightFirst = pindexLast->nHeight - (params.DifficultyAdjustmentInterval()-1);
+    int nHeightFirst = pindexLast->nHeight - (nDifficultyAdjustmentInterval-1);
     assert(nHeightFirst >= 0);
     const CBlockIndex* pindexFirst = pindexLast->GetAncestor(nHeightFirst);
     assert(pindexFirst);
@@ -88,6 +203,10 @@ unsigned int CalculateNextWorkRequired(const CBlockIndex* pindexLast, int64_t nF
 // or decrease beyond the permitted limits.
 bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t height, uint32_t old_nbits, uint32_t new_nbits)
 {
+    if (params.IsASERTActive(height)) {
+        return DeriveTarget(new_nbits, params.powLimit).has_value();
+    }
+
     if (params.fPowAllowMinDifficultyBlocks) return true;
 
     if (height % params.DifficultyAdjustmentInterval() == 0) {

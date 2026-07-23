@@ -1,79 +1,372 @@
-Bitcoin Core integration/staging tree
-=====================================
+[![GitHub release](https://img.shields.io/github/v/release/fjarcode/fjarcode-core)](https://github.com/fjarcode/fjarcode-core/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-https://bitcoincore.org
+<p align="center">
+	<img src="share/pixmaps/fjarcode.png" alt="FJARCODE logo" width="140" />
+</p>
 
-For an immediately usable, binary version of the Bitcoin Core software, see
-https://bitcoincore.org/en/download/.
+<h1 align="center"><span style="color:#ef4444;">FJAR</span>CODE</h1>
 
-What is Bitcoin Core?
----------------------
+<p align="center">Mainnet P2P: 28439 | Mainnet RPC: 28442 | CashAddr: fjarcode:</p>
 
-Bitcoin Core connects to the Bitcoin peer-to-peer network to download and fully
-validate blocks and transactions. It also includes a wallet and graphical user
-interface, which can be optionally built.
+FJARCODE (FJAR) is a cryptocurrency with FJAR consensus rules active from genesis, including 32 MB blocks, ASERT difficulty adjustment, CashAddr addressing, and SegWit disabled.
 
-Further information about Bitcoin Core is available in the [doc folder](/doc).
+The chain supports a SHA-256d to SHA3-256t mining transition by configured activation height. On testnet4 and regtest, SHA3-256t is active from the first mined block (height 1), and ASERT retargeting is active from chain start.
 
-License
--------
+FJARCODE also includes the Code Quantum address/runtime path, including ML-DSA-65-oriented provider interfaces and validation contracts used for staged rollout and interoperability testing, aligned with the NIST-standardized ML-DSA family (FIPS 204).
 
-Bitcoin Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
-information or see https://opensource.org/license/MIT.
+---
 
-Development Process
--------------------
+## Table of Contents
 
-The `master` branch is regularly built (see `doc/build-*.md` for instructions) and tested, but it is not guaranteed to be
-completely stable. [Tags](https://github.com/bitcoin/bitcoin/tags) are created
-regularly from release branches to indicate new official, stable release versions of Bitcoin Core.
+1. Features
+2. System Requirements
+3. Build Instructions
+4. Hosted Artifacts
+5. Configuration
+6. Network Information
+7. Consensus Activation Summary
+8. Code Quantum and ML-DSA-65
+9. Hard Fork Policy Notes
+10. License
 
-The https://github.com/bitcoin-core/gui repository is used exclusively for the
-development of the GUI. Its master branch is identical in all monotree
-repositories. Release branches and tags do not exist, so please do not fork
-that repository unless it is for development reasons.
+---
 
-The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md)
-and useful hints for developers can be found in [doc/developer-notes.md](doc/developer-notes.md).
+## Features
 
-Testing
--------
+| Feature | Value |
+|---------|-------|
+| Block Size | 32 MB |
+| Difficulty Adjustment | ASERT |
+| PoW Algorithms | SHA-256d and SHA3-256t (activation-height controlled) |
+| Address Format | CashAddr (fjarcode:q...) |
+| Code Quantum | CashAddr quantum type and runtime/provider integration |
+| ML-DSA-65 | Native provider pathway and contract-tested dispatch flow (NIST FIPS 204 aligned) |
+| SegWit | Disabled |
+| Coin Symbol | FJAR |
 
-Testing and code review is the bottleneck for development; we get more pull
-requests than we can review and test on short notice. Please be patient and help out by testing
-other people's pull requests, and remember this is a security-critical project where any mistake might cost people
-lots of money.
+---
 
-### Automated Testing
+## System Requirements
 
-Developers are strongly encouraged to write [unit tests](src/test/README.md) for new code, and to
-submit new unit tests for old code. Unit tests can be compiled and run
-(assuming they weren't disabled during the generation of the build system) with: `ctest`. Further details on running
-and extending unit tests can be found in [/src/test/README.md](/src/test/README.md).
+### Minimum
+- CPU: 2 cores
+- RAM: 4 GB
+- Disk: 20 GB SSD
+- Network: 10 Mbps
 
-There are also [regression and integration tests](/test), written
-in Python.
-These tests can be run (if the [test dependencies](/test) are installed) with: `build/test/functional/test_runner.py`
-(assuming `build` is your build directory).
+### Recommended
+- CPU: 4+ cores
+- RAM: 8+ GB
+- Disk: 50+ GB SSD
+- Network: 100+ Mbps
 
-The CI (Continuous Integration) systems make sure that every pull request is tested on Windows, Linux, and macOS.
-The CI must pass on all commits before merge to avoid unrelated CI failures on new pull requests.
+---
 
-### Manual Quality Assurance (QA) Testing
+## Build Instructions
 
-Changes should be tested by somebody other than the developer who wrote the
-code. This is especially important for large or high-risk changes. It is useful
-to add a test plan to the pull request description if testing the changes is
-not straightforward.
+The project uses CMake. Typical release-oriented out-of-tree builds are below.
 
-Translations
-------------
+### Linux (native)
 
-Changes to translations as well as new translations can be submitted to
-[Bitcoin Core's Transifex page](https://explore.transifex.com/bitcoin/bitcoin/).
+```bash
+cd /root/fjarcode-v30.0.0
+cmake -S . -B build-linux-release-v30 \
+	-DCMAKE_BUILD_TYPE=Release \
+	-DBUILD_GUI=ON \
+	-DBUILD_TESTS=ON
+cmake --build build-linux-release-v30 -j"$(nproc)"
+```
 
-Translations are periodically pulled from Transifex and merged into the git repository. See the
-[translation process](doc/translation_process.md) for details on how this works.
+Main binaries are written under `build-linux-release-v30/bin/`.
 
-**Important**: We do not accept translation changes as GitHub pull requests because the next
-pull from Transifex would automatically overwrite them again.
+### Windows (Win64 cross-build on Linux)
+
+```bash
+cd /root/fjarcode-v30.0.0
+cmake -S . -B build-win64-release-v30 \
+	-DCMAKE_BUILD_TYPE=Release \
+	-DBUILD_GUI=ON
+cmake --build build-win64-release-v30 -j"$(nproc)"
+```
+
+Win64 outputs are written under `build-win64-release-v30/bin/`.
+
+### macOS
+
+```bash
+cd /path/to/fjarcode-v30.0.0
+cmake -S . -B build-macos-release \
+	-DCMAKE_BUILD_TYPE=Release \
+	-DBUILD_GUI=ON
+cmake --build build-macos-release -j"$(sysctl -n hw.ncpu)"
+```
+
+On macOS hosts with Apple toolchains and Qt available, app outputs are generated under `build-macos-release/bin/`.
+
+---
+
+## Hosted Artifacts (v30.0.0)
+
+Download path:
+
+- `/var/www/html/downloads`
+
+Windows:
+
+- `fjarcode-qt-v30.0.0-win64.exe`
+- `fjarcode-qt-v30.0.0-win64.zip`
+
+Linux:
+
+- `fjarcode-v30.0.0-linux-x86_64`
+- `fjarcoded-v30.0.0-linux-x86_64`
+- `fjarcode-cli-v30.0.0-linux-x86_64`
+- `fjarcode-tx-v30.0.0-linux-x86_64`
+- `fjarcode-wallet-v30.0.0-linux-x86_64`
+- `fjarcode-util-v30.0.0-linux-x86_64`
+- `fjarcode-qt-v30.0.0-linux-x86_64`
+- `fjarcode-v30.0.0-linux-x86_64-artifacts.tar.gz`
+
+Checksums:
+
+- `SHA256SUMS.txt` and per-file `.sha256`
+
+---
+
+## Configuration
+
+Create configuration at ~/.fjarcode/fjarcode.conf:
+
+```ini
+# Network
+listen=1
+maxconnections=125
+port=28439
+
+# RPC
+server=1
+rpcuser=yourusername
+rpcpassword=yourpassword
+rpcallowip=127.0.0.1
+rpcport=28442
+
+# Performance
+dbcache=450
+maxmempool=300
+
+# Optional prune
+# prune=10000
+```
+
+### Default Ports by Network
+
+| Network | P2P Port | RPC Port |
+|---------|----------|----------|
+| Mainnet | 28439 | 28442 |
+| Testnet | 29439 | 29442 |
+| Testnet4 | 48333 | 48332 |
+| Signet | 30439 | 30442 |
+| Regtest | 31439 | 31442 |
+
+### Example Network Overrides
+
+```ini
+# Testnet
+# testnet=1
+# port=29439
+# rpcport=29442
+
+# Testnet4
+# testnet4=1
+# port=48333
+# rpcport=48332
+
+# Signet
+# signet=1
+# port=30439
+# rpcport=30442
+
+# Regtest
+# regtest=1
+# port=31439
+# rpcport=31442
+```
+
+---
+
+## Network Information
+
+### Mainnet
+
+| Parameter | Value |
+|-----------|-------|
+| P2P Port | 28439 |
+| RPC Port | 28442 |
+| CashAddr Prefix | fjarcode: |
+| Legacy Base58 Prefix | 0x00 |
+
+### Additional Networks
+
+| Network | P2P | RPC | CashAddr Prefix |
+|---------|-----|-----|-----------------|
+| Testnet | 29439 | 29442 | fjarcodetest |
+| Testnet4 | 48333 | 48332 | fjarcodetest4 |
+| Signet | 30439 | 30442 | fjarcodesignet |
+| Regtest | 31439 | 31442 | fjarcoderegtest |
+
+### DNS Seeds (Mainnet)
+
+- seed01.fjarcode.com
+- seed02.fjarcode.com
+
+---
+
+## Consensus Activation Summary
+
+| Network | SHA3 Height | SHA3 Target Spacing | Policy Hard Fork Height | Policy Checkpoint Height |
+|---------|-------------|---------------------|--------------------------|--------------------------|
+| Mainnet | 21000 | 60 seconds | 118000 | 117800 |
+| Testnet | 21000 | 60 seconds | 118000 | 117800 |
+| Testnet4 | 1 | 60 seconds | 0 | 0 |
+| Signet | 21000 | 60 seconds | never active | never active |
+| Regtest | 1 | 60 seconds | 0 | 0 |
+
+Notes:
+- Testnet4 is intentionally configured for easy public testing: SHA3 is active from height 1 and ASERT-based retargeting is enabled.
+- Regtest is aligned with fast local testing: SHA3 is active from height 1.
+- Mainnet/testnet also use ASERT-based retarget behavior.
+
+---
+
+## Code Quantum and ML-DSA-65
+
+- Code Quantum addresses are available via the quantum CashAddr destination type in wallet and RPC flows.
+- In this update, Code Quantum is the default address type returned by `getnewaddress`.
+- The native provider runtime path for ML-DSA-65 is integrated through backend/provider interfaces with deterministic fallback behavior.
+- The ML-DSA integration targets the NIST standard track defined in FIPS 204.
+- Contract tests freeze callback order, provider registration precedence, and cleanup/reset semantics to protect integration behavior across releases.
+- On testnet4, operators can validate post-transition mining behavior immediately: block 1+ uses SHA3 activation rules with ASERT-based retargeting.
+
+### Quantum CashAddr Encoding (Electrum/Indexer Notes)
+
+If you are integrating with an Electrum server, indexer, or explorer, Code Quantum addresses use CashAddr with a dedicated type.
+
+1. Prefix by network:
+
+| Network | Prefix |
+|---------|--------|
+| Mainnet | `fjarcode` |
+| Testnet | `fjarcodetest` |
+| Testnet4 | `fjarcodetest4` |
+| Signet | `fjarcodesignet` |
+| Regtest | `fjarcoderegtest` |
+
+2. CashAddr type mapping:
+- Type `0`: P2PKH (20-byte hash)
+- Type `1`: P2SH (20-byte hash)
+- Type `2`: Code Quantum (32-byte hash)
+
+3. Quantum payload rules:
+- Must decode as CashAddr type `2`.
+- Payload length must be exactly 32 bytes.
+- If payload is not 32 bytes, treat as invalid Quantum address.
+
+4. Script template for Quantum destinations:
+- `OP_HASH256 <32-byte-quantum-hash> OP_EQUAL`
+- This is the script generated by wallet/RPC for Code Quantum destinations.
+
+5. Parsing behavior:
+- Full form with prefix is accepted (for example `fjarcode:...`).
+- Prefixless form can also be decoded when it matches the active network prefix rules.
+
+6. Useful RPCs for integration tests:
+
+```bash
+# Generate a wallet-managed quantum receive address
+fjarcode-cli getnewquantumaddress "cq-receive"
+
+# Build a quantum address from a known 32-byte hash and return scriptPubKey
+fjarcode-cli getcodequantumaddress "11223344556677889900aabbccddeeff00112233445566778899aabbccddeeff"
+```
+
+7. Electrum indexing hint:
+- Index by the scriptPubKey derived from the decoded Quantum payload.
+- For Electrum scripthash keys, use the standard Electrum convention:
+	SHA256(scriptPubKey) with byte order reversed in hex.
+
+### CLI Wallet Signing Workflow
+
+1. Check runtime capability and signing state:
+
+```bash
+fjarcode-cli getcodequantuminfo
+```
+
+Look at `capabilities`:
+- `mldsa_65_verify_state`: native verify runtime (`available` or `unavailable`).
+- `code_quantum_signing_state`: effective wallet/runtime signing state (`disabled`, `verify_only`, or `enabled`).
+
+2. Create or use a quantum destination:
+
+```bash
+fjarcode-cli getnewquantumaddress "cq-receive"
+```
+
+3. Enable wallet quantum signing explicitly when signing spends:
+
+```bash
+fjarcoded -enablecodequantumsigning=1
+```
+
+The feature gate is intentionally default-off.
+
+4. Sign via wallet RPC as usual:
+
+```bash
+fjarcode-cli signrawtransactionwithwallet "<rawhex>"
+```
+
+### Current Capability State (v30 Hard-Fork Branch)
+
+- Verify path: active and available for Code Quantum wrapped flows (including ML-DSA-65 algorithm routing under current native/builtin profile).
+- Signing path: feature-gated and default-off at wallet/runtime level (`-enablecodequantumsigning=0` by default).
+- Effective state model exposed by `getcodequantuminfo.capabilities.code_quantum_signing_state`:
+	- `disabled`: wallet signing gate is off.
+	- `verify_only`: wallet signing gate is on but native signer is unavailable in current runtime.
+	- `enabled`: wallet signing gate is on and native signer is available.
+
+### Expected CLI Failure Modes
+
+- `Code Quantum input signing is disabled (-enablecodequantumsigning=1 to enable)`
+	- Cause: wallet feature gate is off.
+	- Action: restart daemon/wallet process with `-enablecodequantumsigning=1`.
+
+- `Code Quantum signer backend unavailable (runtime is verify-only)`
+	- Cause: wallet gate is on, but native signer is not available in current runtime/build profile.
+	- Action: use a signing-capable profile/backend, or keep node in verify-only mode.
+
+- `Code Quantum signing failed (malformed key material or unsupported mode)`
+	- Cause: signing path reached Code Quantum flow but input key/material or mode contract is invalid for signing.
+	- Action: validate redeem script/address type coherence, key availability, and signing mode assumptions.
+
+### GUI Wallet Workflow
+
+- Receive flow: use the `CashAddr (Quantum)` receive type in the wallet receive dialog.
+- Spend/sign flow: GUI wallet signing follows the same runtime gate and backend-state rules as CLI.
+- Operational guidance: if signing fails, use `getcodequantuminfo` to confirm whether runtime is `disabled`, `verify_only`, or `enabled` before retrying.
+
+---
+
+## Hard Fork Policy Notes
+
+- FJAR consensus rules are active from genesis.
+- Mainnet/Testnet policy rollout targets remain 118000/117800.
+- Testnet4 and Regtest policy heights are fixed at 0 for immediate post-hardfork policy behavior.
+- After SHA3 activation on a network, block headers must carry the SHA3 version bit.
+
+---
+
+## License
+
+FJARCODE Core is released under the terms of the MIT license. See [COPYING](COPYING) for details.

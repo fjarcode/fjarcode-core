@@ -1667,13 +1667,16 @@ bool PeerManagerImpl::HasAllDesirableServiceFlags(ServiceFlags services) const
 
 ServiceFlags PeerManagerImpl::GetDesirableServiceFlags(ServiceFlags services) const
 {
+    const bool segwit_disabled = m_chainparams.GetConsensus().SegwitHeight == Consensus::NEVER_ACTIVE_HEIGHT;
+    const ServiceFlags witness_flag = segwit_disabled ? NODE_NONE : NODE_WITNESS;
+
     if (services & NODE_NETWORK_LIMITED) {
         // Limited peers are desirable when we are close to the tip.
         if (ApproximateBestBlockDepth() < NODE_NETWORK_LIMITED_ALLOW_CONN_BLOCKS) {
-            return ServiceFlags(NODE_NETWORK_LIMITED | NODE_WITNESS);
+            return ServiceFlags(NODE_NETWORK_LIMITED | witness_flag);
         }
     }
-    return ServiceFlags(NODE_NETWORK | NODE_WITNESS);
+    return ServiceFlags(NODE_NETWORK | witness_flag);
 }
 
 PeerRef PeerManagerImpl::GetPeerRef(NodeId id) const

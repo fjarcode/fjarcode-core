@@ -265,6 +265,8 @@ public:
 
     bool GetCScript(const CScriptID &scriptid, CScript& script) const override { return m_spk_man.GetCScript(scriptid, script); }
     bool HaveCScript(const CScriptID &scriptid) const override { return m_spk_man.HaveCScript(scriptid); }
+    bool GetCScriptByHash256(const uint256& scriptid256, CScript& script) const override { return m_spk_man.GetCScriptByHash256(scriptid256, script); }
+    bool HaveCScriptByHash256(const uint256& scriptid256) const override { return m_spk_man.HaveCScriptByHash256(scriptid256); }
     bool GetPubKey(const CKeyID &address, CPubKey& pubkey) const override { return m_spk_man.GetPubKey(address, pubkey); }
     bool GetKey(const CKeyID &address, CKey& key) const override { return false; }
     bool HaveKey(const CKeyID &address) const override { return false; }

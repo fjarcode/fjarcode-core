@@ -4,7 +4,7 @@
 
 #include <qt/transactiondesc.h>
 
-#include <qt/bitcoinunits.h>
+#include <qt/fjarcodeunits.h>
 #include <qt/guiutil.h>
 #include <qt/paymentserver.h>
 #include <qt/transactionrecord.h>
@@ -223,7 +223,7 @@ QString TransactionDesc::toHTML(interfaces::Node& node, interfaces::Wallet& wall
                         if (wallet.getAddress(
                                 address, &name, /*purpose=*/nullptr) && !name.empty())
                             strHTML += GUIUtil::HtmlEscape(name) + " ";
-                        strHTML += GUIUtil::HtmlEscape(EncodeDestination(address));
+                        strHTML += GUIUtil::HtmlEscape(GUIUtil::DisplayAddress(address));
                         if(toSelf)
                             strHTML += " (" + tr("own address") + ")";
                         strHTML += "<br>";

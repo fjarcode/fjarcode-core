@@ -4,6 +4,8 @@
 
 #include <qt/transactionrecord.h>
 
+#include <qt/guiutil.h>
+
 #include <chain.h>
 #include <interfaces/wallet.h>
 #include <key_io.h>
@@ -71,7 +73,7 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const interface
                 {
                     // Sent to Bitcoin Address
                     sub.type = TransactionRecord::SendToAddress;
-                    sub.address = EncodeDestination(wtx.txout_address[i]);
+                    sub.address = GUIUtil::DisplayAddress(wtx.txout_address[i]).toStdString();
                 }
                 else
                 {
@@ -106,7 +108,7 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const interface
                 {
                     // Received by Bitcoin Address
                     sub.type = TransactionRecord::RecvWithAddress;
-                    sub.address = EncodeDestination(wtx.txout_address[i]);
+                    sub.address = GUIUtil::DisplayAddress(wtx.txout_address[i]).toStdString();
                 }
                 else
                 {

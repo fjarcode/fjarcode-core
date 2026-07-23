@@ -5,7 +5,7 @@
 #include <qt/overviewpage.h>
 #include <qt/forms/ui_overviewpage.h>
 
-#include <qt/bitcoinunits.h>
+#include <qt/fjarcodeunits.h>
 #include <qt/clientmodel.h>
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
@@ -20,6 +20,7 @@
 #include <QApplication>
 #include <QDateTime>
 #include <QPainter>
+#include <QPixmap>
 #include <QStatusTipEvent>
 
 #include <algorithm>
@@ -137,10 +138,15 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
 {
     ui->setupUi(this);
 
-    // use a SingleColorIcon for the "out of sync warning" icon
-    QIcon icon = m_platform_style->SingleColorIcon(QStringLiteral(":/icons/warning"));
+    // use a text-color icon for better contrast on dark themes
+    QIcon icon = m_platform_style->TextColorIcon(QIcon(QStringLiteral(":/icons/warning")));
     ui->labelTransactionsStatus->setIcon(icon);
     ui->labelWalletStatus->setIcon(icon);
+    ui->labelTransactionsStatus->setStyleSheet("QPushButton { border: 0; background: transparent; padding: 0px; }");
+    ui->labelWalletStatus->setStyleSheet("QPushButton { border: 0; background: transparent; padding: 0px; }");
+
+    const QPixmap wallet_logo(QStringLiteral(":/icons/fjarcode"));
+    ui->labelOverviewLogo->setPixmap(wallet_logo.scaled(260, 120, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 
     // Recent transactions
     ui->listTransactions->setItemDelegate(txdelegate);
@@ -246,7 +252,7 @@ void OverviewPage::setWalletModel(WalletModel *model)
 void OverviewPage::changeEvent(QEvent* e)
 {
     if (e->type() == QEvent::PaletteChange) {
-        QIcon icon = m_platform_style->SingleColorIcon(QStringLiteral(":/icons/warning"));
+        QIcon icon = m_platform_style->TextColorIcon(QIcon(QStringLiteral(":/icons/warning")));
         ui->labelTransactionsStatus->setIcon(icon);
         ui->labelWalletStatus->setIcon(icon);
     }

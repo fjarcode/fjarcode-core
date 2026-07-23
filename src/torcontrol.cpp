@@ -100,7 +100,11 @@ void TorControlConnection::readcb(struct bufferevent *bev, void *ctx)
         if (s.size() < 4) // Short line
             continue;
         // <status>(-|+| )<data><CRLF>
-        self->message.code = ToIntegral<int>(s.substr(0, 3)).value_or(0);
+        if (IsDigit(s[0]) && IsDigit(s[1]) && IsDigit(s[2])) {
+            self->message.code = (s[0] - '0') * 100 + (s[1] - '0') * 10 + (s[2] - '0');
+        } else {
+            self->message.code = 0;
+        }
         self->message.lines.push_back(s.substr(4));
         char ch = s[3]; // '-','+' or ' '
         if (ch == ' ') {

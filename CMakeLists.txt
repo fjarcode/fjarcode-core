@@ -26,7 +26,7 @@ get_directory_property(precious_variables CACHE_VARIABLES)
 #=============================
 # Project / Package metadata
 #=============================
-set(CLIENT_NAME "Bitcoin Core")
+set(CLIENT_NAME "FJARCODE")
 set(CLIENT_VERSION_MAJOR 30)
 set(CLIENT_VERSION_MINOR 0)
 set(CLIENT_VERSION_BUILD 0)
@@ -52,8 +52,8 @@ set(CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
 
 project(BitcoinCore
   VERSION ${CLIENT_VERSION_MAJOR}.${CLIENT_VERSION_MINOR}.${CLIENT_VERSION_BUILD}
-  DESCRIPTION "Bitcoin client software"
-  HOMEPAGE_URL "https://bitcoincore.org/"
+  DESCRIPTION "FJARCODE client software"
+  HOMEPAGE_URL "https://fjarcode.com/"
   LANGUAGES NONE
 )
 
@@ -64,7 +64,7 @@ endif()
 
 set(COPYRIGHT_HOLDERS "The %s developers")
 set(COPYRIGHT_HOLDERS_FINAL "The ${CLIENT_NAME} developers")
-set(CLIENT_BUGREPORT "https://github.com/bitcoin/bitcoin/issues")
+set(CLIENT_BUGREPORT "https://github.com/fjarcode/fjarcode-core/issues")
 
 #=============================
 # Language setup
@@ -94,16 +94,16 @@ endif()
 #=============================
 include(CMakeDependentOption)
 # When adding a new option, end the <help_text> with a full stop for consistency.
-option(BUILD_BITCOIN_BIN "Build bitcoin executable." ON)
-option(BUILD_DAEMON "Build bitcoind executable." ON)
-option(BUILD_GUI "Build bitcoin-qt executable." OFF)
-option(BUILD_CLI "Build bitcoin-cli executable." ON)
+option(BUILD_BITCOIN_BIN "Build fjarcode executable." ON)
+option(BUILD_DAEMON "Build fjarcoded executable." ON)
+option(BUILD_GUI "Build fjarcode-qt executable." OFF)
+option(BUILD_CLI "Build fjarcode-cli executable." ON)
 
-option(BUILD_TESTS "Build test_bitcoin and other unit test executables." ON)
-option(BUILD_TX "Build bitcoin-tx executable." ${BUILD_TESTS})
-option(BUILD_UTIL "Build bitcoin-util executable." ${BUILD_TESTS})
+option(BUILD_TESTS "Build test_fjarcode and other unit test executables." ON)
+option(BUILD_TX "Build fjarcode-tx executable." ${BUILD_TESTS})
+option(BUILD_UTIL "Build fjarcode-util executable." ${BUILD_TESTS})
 
-option(BUILD_UTIL_CHAINSTATE "Build experimental bitcoin-chainstate executable." OFF)
+option(BUILD_UTIL_CHAINSTATE "Build experimental fjarcode-chainstate executable." OFF)
 option(BUILD_KERNEL_LIB "Build experimental bitcoinkernel library." ${BUILD_UTIL_CHAINSTATE})
 
 option(ENABLE_WALLET "Enable wallet." ON)
@@ -115,7 +115,7 @@ if(ENABLE_WALLET)
     find_package(SQLite3 3.7.17 REQUIRED)
   endif()
 endif()
-cmake_dependent_option(BUILD_WALLET_TOOL "Build bitcoin-wallet tool." ${BUILD_TESTS} "ENABLE_WALLET" OFF)
+cmake_dependent_option(BUILD_WALLET_TOOL "Build fjarcode-wallet tool." ${BUILD_TESTS} "ENABLE_WALLET" OFF)
 
 option(REDUCE_EXPORTS "Attempt to reduce exported symbols in the resulting executables." OFF)
 option(WERROR "Treat compiler warnings as errors." OFF)
@@ -132,6 +132,11 @@ if(WITH_USDT)
 endif()
 
 option(ENABLE_EXTERNAL_SIGNER "Enable external signer support." ON)
+option(ENABLE_MLDSA65_NATIVE_BACKEND "Enable native ML-DSA-65 backend provider integration." OFF)
+option(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_VERIFY "Enable built-in secp256k1 native verify backend for ML-DSA-65 provider wiring." OFF)
+option(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD "Enable ML-DSA-65 external backend integration scaffold (no verification behavior change)." OFF)
+set(MLDSA65_EXTERNAL_BACKEND_HEADER "" CACHE STRING "Optional external ML-DSA-65 backend header to probe when scaffold is enabled.")
+set(MLDSA65_EXTERNAL_BACKEND_LIBRARY "" CACHE STRING "Optional external ML-DSA-65 backend library to probe/link for real verify API dispatch.")
 
 cmake_dependent_option(WITH_QRENCODE "Enable QR code support." ON "BUILD_GUI" OFF)
 if(WITH_QRENCODE)
@@ -141,7 +146,7 @@ endif()
 
 cmake_dependent_option(WITH_DBUS "Enable DBus support." ON "NOT CMAKE_SYSTEM_NAME MATCHES \"(Windows|Darwin)\" AND BUILD_GUI" OFF)
 
-cmake_dependent_option(ENABLE_IPC "Build multiprocess bitcoin-node and bitcoin-gui executables in addition to monolithic bitcoind and bitcoin-qt executables." ON "NOT WIN32" OFF)
+cmake_dependent_option(ENABLE_IPC "Build multiprocess fjarcode-node and fjarcode-gui executables in addition to monolithic fjarcoded and fjarcode-qt executables." ON "NOT WIN32" OFF)
 cmake_dependent_option(WITH_EXTERNAL_LIBMULTIPROCESS "Build with external libmultiprocess library instead of with local git subtree when ENABLE_IPC is enabled. This is not normally recommended, but can be useful for developing libmultiprocess itself." OFF "ENABLE_IPC" OFF)
 if(ENABLE_IPC AND WITH_EXTERNAL_LIBMULTIPROCESS)
   find_package(Libmultiprocess REQUIRED COMPONENTS Lib)
@@ -150,7 +155,7 @@ if(ENABLE_IPC AND WITH_EXTERNAL_LIBMULTIPROCESS)
   )
 endif()
 
-cmake_dependent_option(BUILD_GUI_TESTS "Build test_bitcoin-qt executable." ON "BUILD_GUI;BUILD_TESTS" OFF)
+cmake_dependent_option(BUILD_GUI_TESTS "Build test_fjarcode-qt executable." ON "BUILD_GUI;BUILD_TESTS" OFF)
 if(BUILD_GUI)
   set(qt_components Core Gui Widgets LinguistTools)
   if(ENABLE_WALLET)
@@ -169,7 +174,7 @@ if(BUILD_GUI)
   unset(qt_components)
 endif()
 
-option(BUILD_BENCH "Build bench_bitcoin executable." OFF)
+option(BUILD_BENCH "Build bench_fjarcode executable." OFF)
 option(BUILD_FUZZ_BINARY "Build fuzz binary." OFF)
 option(BUILD_FOR_FUZZING "Build for fuzzing. Enabling this will disable all other targets and override BUILD_FUZZ_BINARY." OFF)
 
@@ -200,6 +205,61 @@ target_link_libraries(core_interface INTERFACE
   $<$<CONFIG:RelWithDebInfo>:core_interface_relwithdebinfo>
   $<$<CONFIG:Debug>:core_interface_debug>
 )
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+  foreach(_pkg_include_dir IN ITEMS /usr/local/include /opt/homebrew/include)
+    if(EXISTS "${_pkg_include_dir}")
+      target_include_directories(core_interface SYSTEM INTERFACE "${_pkg_include_dir}")
+    endif()
+  endforeach()
+endif()
+
+if(ENABLE_MLDSA65_NATIVE_BACKEND)
+  target_compile_definitions(core_interface INTERFACE ENABLE_MLDSA65_NATIVE_BACKEND)
+endif()
+
+if(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_VERIFY)
+  target_compile_definitions(core_interface INTERFACE ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_VERIFY)
+endif()
+
+if(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD)
+  target_compile_definitions(core_interface INTERFACE ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD)
+  if(MLDSA65_EXTERNAL_BACKEND_HEADER)
+    include(CheckIncludeFileCXX)
+    check_include_file_cxx("${MLDSA65_EXTERNAL_BACKEND_HEADER}" HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+    if(HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+      target_compile_definitions(core_interface INTERFACE HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+
+      # Probe for a concrete external verify API declaration in the supplied
+      # header. This signal is used to distinguish real backend-ready headers
+      # from generic probe-only headers.
+      include(CheckCXXSourceCompiles)
+      set(CMAKE_REQUIRED_QUIET TRUE)
+      check_cxx_source_compiles(
+        "#include <cstddef>\n#include <${MLDSA65_EXTERNAL_BACKEND_HEADER}>\nusing verify_fn_t = int (*)(const unsigned char*, std::size_t, const unsigned char*, std::size_t, const unsigned char*, std::size_t);\nint main() { verify_fn_t fn = &codequantum_mldsa65_external_verify; (void)fn; return 0; }"
+        HAVE_MLDSA65_EXTERNAL_BACKEND_VERIFY_API)
+      if(HAVE_MLDSA65_EXTERNAL_BACKEND_VERIFY_API)
+        target_compile_definitions(core_interface INTERFACE HAVE_MLDSA65_EXTERNAL_BACKEND_VERIFY_API)
+
+        if(MLDSA65_EXTERNAL_BACKEND_LIBRARY)
+          include(CMakePushCheckState)
+          cmake_push_check_state(RESET)
+          set(CMAKE_REQUIRED_QUIET TRUE)
+          set(CMAKE_REQUIRED_LIBRARIES "${MLDSA65_EXTERNAL_BACKEND_LIBRARY}")
+          check_cxx_source_compiles(
+            "#include <cstddef>\n#include <${MLDSA65_EXTERNAL_BACKEND_HEADER}>\nint main() { return codequantum_mldsa65_external_verify(nullptr, 0, nullptr, 0, nullptr, 0); }"
+            HAVE_MLDSA65_EXTERNAL_BACKEND_VERIFY_LINK)
+          cmake_pop_check_state()
+
+          if(HAVE_MLDSA65_EXTERNAL_BACKEND_VERIFY_LINK)
+            target_compile_definitions(core_interface INTERFACE HAVE_MLDSA65_EXTERNAL_BACKEND_VERIFY_LINK)
+            target_link_libraries(core_interface INTERFACE "${MLDSA65_EXTERNAL_BACKEND_LIBRARY}")
+          endif()
+        endif()
+      endif()
+    endif()
+  endif()
+endif()
 
 if(BUILD_FOR_FUZZING)
   message(WARNING "BUILD_FOR_FUZZING=ON will disable all other targets and force BUILD_FUZZ_BINARY=ON.")
@@ -647,26 +707,26 @@ message("\n")
 message("Configure summary")
 message("=================")
 message("Executables:")
-message("  bitcoin ............................. ${BUILD_BITCOIN_BIN}")
-message("  bitcoind ............................ ${BUILD_DAEMON}")
+message("  fjarcode ............................ ${BUILD_BITCOIN_BIN}")
+message("  fjarcoded ........................... ${BUILD_DAEMON}")
 if(BUILD_DAEMON AND ENABLE_IPC)
   set(bitcoin_daemon_status ON)
 else()
   set(bitcoin_daemon_status OFF)
 endif()
-message("  bitcoin-node (multiprocess) ......... ${bitcoin_daemon_status}")
-message("  bitcoin-qt (GUI) .................... ${BUILD_GUI}")
+message("  fjarcode-node (multiprocess) ........ ${bitcoin_daemon_status}")
+message("  fjarcode-qt (GUI) ................... ${BUILD_GUI}")
 if(BUILD_GUI AND ENABLE_IPC)
   set(bitcoin_gui_status ON)
 else()
   set(bitcoin_gui_status OFF)
 endif()
-message("  bitcoin-gui (GUI, multiprocess) ..... ${bitcoin_gui_status}")
-message("  bitcoin-cli ......................... ${BUILD_CLI}")
-message("  bitcoin-tx .......................... ${BUILD_TX}")
-message("  bitcoin-util ........................ ${BUILD_UTIL}")
-message("  bitcoin-wallet ...................... ${BUILD_WALLET_TOOL}")
-message("  bitcoin-chainstate (experimental) ... ${BUILD_UTIL_CHAINSTATE}")
+message("  fjarcode-gui (GUI, multiprocess) .... ${bitcoin_gui_status}")
+message("  fjarcode-cli ........................ ${BUILD_CLI}")
+message("  fjarcode-tx ......................... ${BUILD_TX}")
+message("  fjarcode-util ....................... ${BUILD_UTIL}")
+message("  fjarcode-wallet ..................... ${BUILD_WALLET_TOOL}")
+message("  fjarcode-chainstate (experimental) .. ${BUILD_UTIL_CHAINSTATE}")
 message("  libbitcoinkernel (experimental) ..... ${BUILD_KERNEL_LIB}")
 message("Optional features:")
 message("  wallet support ...................... ${ENABLE_WALLET}")
@@ -686,9 +746,9 @@ message("  USDT tracing ........................ ${WITH_USDT}")
 message("  QR code (GUI) ....................... ${WITH_QRENCODE}")
 message("  DBus (GUI) .......................... ${WITH_DBUS}")
 message("Tests:")
-message("  test_bitcoin ........................ ${BUILD_TESTS}")
-message("  test_bitcoin-qt ..................... ${BUILD_GUI_TESTS}")
-message("  bench_bitcoin ....................... ${BUILD_BENCH}")
+message("  test_fjarcode ....................... ${BUILD_TESTS}")
+message("  test_fjarcode-qt .................... ${BUILD_GUI_TESTS}")
+message("  bench_fjarcode ...................... ${BUILD_BENCH}")
 message("  fuzz binary ......................... ${BUILD_FUZZ_BINARY}")
 message("")
 if(CMAKE_CROSSCOMPILING)

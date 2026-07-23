@@ -145,9 +145,29 @@ class FrameworkInfo(object):
 class ApplicationBundleInfo(object):
     def __init__(self, path: str):
         self.path = path
-        # for backwards compatibility reasons, this must remain as Bitcoin-Qt
-        self.binaryPath = os.path.join(path, "Contents", "MacOS", "Bitcoin-Qt")
-        if not os.path.exists(self.binaryPath):
+        macos_dir = os.path.join(path, "Contents", "MacOS")
+        preferred_binaries = [
+            os.path.join(macos_dir, "Bitcoin-Qt"),
+            os.path.join(macos_dir, "fjarcode-qt"),
+        ]
+
+        self.binaryPath = None
+        for candidate in preferred_binaries:
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                self.binaryPath = candidate
+                break
+
+        if self.binaryPath is None:
+            for root, _dirs, files in os.walk(macos_dir):
+                for name in sorted(files):
+                    candidate = os.path.join(root, name)
+                    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                        self.binaryPath = candidate
+                        break
+                if self.binaryPath is not None:
+                    break
+
+        if self.binaryPath is None:
             raise RuntimeError(f"Could not find bundle binary for {path}")
         self.resourcesPath = os.path.join(path, "Contents", "Resources")
         self.pluginPath = os.path.join(path, "Contents", "PlugIns")
@@ -422,7 +442,7 @@ if os.path.exists(appname + ".zip"):
 
 # ------------------------------------------------
 
-target = os.path.join("dist", "Bitcoin-Qt.app")
+target = os.path.join("dist", os.path.basename(app_bundle))
 
 print("+ Copying source bundle +")
 if verbose:
@@ -499,7 +519,7 @@ if platform.system() == "Darwin":
 # ------------------------------------------------
 
 if config.zip is not None:
-    shutil.make_archive('{}'.format(appname), format='zip', root_dir='dist', base_dir='Bitcoin-Qt.app')
+    shutil.make_archive('{}'.format(appname), format='zip', root_dir='dist', base_dir=os.path.basename(target))
 
 # ------------------------------------------------
 

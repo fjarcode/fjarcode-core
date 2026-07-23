@@ -2,10 +2,10 @@
 
 # backward compatibility for existing gentoo layout 
 #
-if [ -d "/var/lib/bitcoin/.bitcoin" ]; then
-	BITCOIND_DEFAULT_DATADIR="/var/lib/bitcoin/.bitcoin"
+if [ -d "/var/lib/fjarcode/.fjarcode" ]; then
+	BITCOIND_DEFAULT_DATADIR="/var/lib/fjarcode/.fjarcode"
 else
-	BITCOIND_DEFAULT_DATADIR="/var/lib/bitcoind"
+	BITCOIND_DEFAULT_DATADIR="/var/lib/fjarcode"
 fi
 
 BITCOIND_CONFIGFILE=${BITCOIND_CONFIGFILE:-/etc/bitcoin/bitcoin.conf}

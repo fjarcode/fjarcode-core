@@ -440,6 +440,16 @@ static bool SignStep(const SigningProvider& provider, const BaseSignatureCreator
         sigdata.missing_redeem_script = h160;
         return false;
     }
+    case TxoutType::SCRIPTHASH32:
+    {
+        uint256 h256{vSolutions[0]};
+        if (provider.GetCScriptByHash256(h256, scriptRet)) {
+            ret.emplace_back(scriptRet.begin(), scriptRet.end());
+            return true;
+        }
+        sigdata.missing_witness_script = h256;
+        return false;
+    }
     case TxoutType::MULTISIG: {
         size_t required = vSolutions.front()[0];
         ret.emplace_back(); // workaround CHECKMULTISIG bug
@@ -509,14 +519,15 @@ bool ProduceSignature(const SigningProvider& provider, const BaseSignatureCreato
     bool P2SH = false;
     CScript subscript;
 
-    if (solved && whichType == TxoutType::SCRIPTHASH)
+    if (solved && (whichType == TxoutType::SCRIPTHASH || whichType == TxoutType::SCRIPTHASH32))
     {
         // Solver returns the subscript that needs to be evaluated;
         // the final scriptSig is the signatures from that
         // and then the serialized subscript:
         subscript = CScript(result[0].begin(), result[0].end());
         sigdata.redeem_script = subscript;
-        solved = solved && SignStep(provider, creator, subscript, result, whichType, SigVersion::BASE, sigdata) && whichType != TxoutType::SCRIPTHASH;
+        solved = solved && SignStep(provider, creator, subscript, result, whichType, SigVersion::BASE, sigdata) &&
+                 whichType != TxoutType::SCRIPTHASH && whichType != TxoutType::SCRIPTHASH32;
         P2SH = true;
     }
 
@@ -629,7 +640,7 @@ SignatureData DataFromTransaction(const CMutableTransaction& tx, unsigned int nI
     SigVersion sigversion = SigVersion::BASE;
     CScript next_script = txout.scriptPubKey;
 
-    if (script_type == TxoutType::SCRIPTHASH && !stack.script.empty() && !stack.script.back().empty()) {
+    if ((script_type == TxoutType::SCRIPTHASH || script_type == TxoutType::SCRIPTHASH32) && !stack.script.empty() && !stack.script.back().empty()) {
         // Get the redeemScript
         CScript redeem_script(stack.script.back().begin(), stack.script.back().end());
         data.redeem_script = redeem_script;
@@ -797,6 +808,8 @@ bool SignTransaction(CMutableTransaction& mtx, const SigningProvider* keystore, 
         }
         const CScript& prevPubKey = coin->second.out.scriptPubKey;
         const CAmount& amount = coin->second.out.nValue;
+        std::vector<std::vector<unsigned char>> script_solutions;
+        const bool is_code_quantum_input = Solver(prevPubKey, script_solutions) == TxoutType::SCRIPTHASH32;
 
         SignatureData sigdata = DataFromTransaction(mtx, i, coin->second.out);
         // Only sign SIGHASH_SINGLE if there's a corresponding output:
@@ -815,8 +828,12 @@ bool SignTransaction(CMutableTransaction& mtx, const SigningProvider* keystore, 
         ScriptError serror = SCRIPT_ERR_OK;
         if (!sigdata.complete && !VerifyScript(txin.scriptSig, prevPubKey, &txin.scriptWitness, STANDARD_SCRIPT_VERIFY_FLAGS, TransactionSignatureChecker(&txConst, i, amount, txdata, MissingDataBehavior::FAIL), &serror)) {
             if (serror == SCRIPT_ERR_INVALID_STACK_OPERATION) {
-                // Unable to sign input and verification failed (possible attempt to partially sign).
-                input_errors[i] = Untranslated("Unable to sign input, invalid stack size (possibly missing key)");
+                if (is_code_quantum_input) {
+                    input_errors[i] = Untranslated("Code Quantum signing failed (malformed key material or unsupported mode)");
+                } else {
+                    // Unable to sign input and verification failed (possible attempt to partially sign).
+                    input_errors[i] = Untranslated("Unable to sign input, invalid stack size (possibly missing key)");
+                }
             } else if (serror == SCRIPT_ERR_SIG_NULLFAIL) {
                 // Verification failed (possibly due to insufficient signatures).
                 input_errors[i] = Untranslated("CHECK(MULTI)SIG failing with non-zero signature (possibly need more signatures)");

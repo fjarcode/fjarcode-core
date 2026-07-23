@@ -12,9 +12,16 @@
 #include <chrono>
 #include <limits>
 #include <map>
+#include <optional>
 #include <vector>
 
 namespace Consensus {
+
+/** Special value indicating a consensus fork is active from genesis. */
+static constexpr int ALWAYS_ACTIVE_HEIGHT = -1;
+
+/** Special value indicating a consensus fork is disabled. */
+static constexpr int NEVER_ACTIVE_HEIGHT = std::numeric_limits<int>::max();
 
 /**
  * A buried deployment is one where the height of the activation has been hardcoded into
@@ -78,6 +85,22 @@ struct BIP9Deployment {
 };
 
 /**
+ * ASERT anchor block parameters for aserti3-2d difficulty adjustment.
+ *
+ * The anchor block is the reference point for ASERT calculations.
+ */
+struct ASERTAnchor {
+    /** Height of the anchor block */
+    int nHeight{-1};
+
+    /** Compact difficulty target (nBits) of the anchor block */
+    uint32_t nBits{0};
+
+    /** Timestamp of the anchor block's parent */
+    int64_t nPrevBlockTime{0};
+};
+
+/**
  * Parameters that influence chain consensus.
  */
 struct Params {
@@ -118,11 +141,76 @@ struct Params {
     bool fPowNoRetargeting;
     int64_t nPowTargetSpacing;
     int64_t nPowTargetTimespan;
+    /** FJAR/BCH parity: default consensus block size. */
+    uint64_t nDefaultConsensusBlockSize{1000000};
+    /** FJAR/BCH parity: automatic finalization depth (0 disables). */
+    int maxReorgDepth{0};
+    /** FJAR policy contract: hard-fork activation anchor height. */
+    int fjarPolicyHardForkHeight{NEVER_ACTIVE_HEIGHT};
+    /** FJAR policy contract: checkpoint/finalization anchor height. */
+    int fjarPolicyCheckpointHeight{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: base feature gate. */
+    int FJARCODEActivationHeight{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: UAHF gate. */
+    int uahfHeight{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: DAA gate. */
+    int daaHeight{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: magnetic anomaly gate. */
+    int magneticAnomalyHeight{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: graviton gate. */
+    int gravitonHeight{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: phonon gate. */
+    int phononHeight{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: axion gate. */
+    int axionHeight{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: upgrade 8 gate. */
+    int upgrade8Height{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: upgrade 9 gate. */
+    int upgrade9Height{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: upgrade 10 gate. */
+    int upgrade10Height{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: upgrade 11 gate. */
+    int upgrade11Height{NEVER_ACTIVE_HEIGHT};
+    /** FJAR activation matrix: upgrade 12 gate. */
+    int upgrade12Height{NEVER_ACTIVE_HEIGHT};
+    /** SHA3 PoW activation height (`NEVER_ACTIVE_HEIGHT` disables SHA3 PoW). */
+    int SHA3Height{NEVER_ACTIVE_HEIGHT};
+    /** nBits at SHA3 activation boundary. */
+    uint32_t nBitsSHA3Height{0x1d00ffff};
+    /** Required block-version bit once SHA3 PoW is active. */
+    int32_t SHA3VersionBit{1 << 12};
+    /** ASERT activation height (evaluated on next block height). */
+    int asertActivationHeight{NEVER_ACTIVE_HEIGHT};
+    /** ASERT anchor parameters; must be set when ASERT is active. */
+    std::optional<ASERTAnchor> asertAnchorParams;
+    /** ASERT half-life constants in seconds. */
+    static constexpr int64_t ASERT_HALFLIFE_1_HOUR = 60 * 60;
+    static constexpr int64_t ASERT_HALFLIFE_2_DAYS = 2 * 24 * 60 * 60;
+    /** ASERT half-life in seconds. */
+    int64_t nASERTHalfLife{ASERT_HALFLIFE_2_DAYS};
+    /** Target spacing from SHA3 activation height onward (seconds). */
+    int64_t nPowTargetSpacingSHA3{60};
     std::chrono::seconds PowTargetSpacing() const
     {
         return std::chrono::seconds{nPowTargetSpacing};
     }
+    int64_t GetPowTargetSpacing(int height) const
+    {
+        return IsSHA3Active(height) ? nPowTargetSpacingSHA3 : nPowTargetSpacing;
+    }
+    std::chrono::seconds PowTargetSpacing(int height) const
+    {
+        return std::chrono::seconds{GetPowTargetSpacing(height)};
+    }
     int64_t DifficultyAdjustmentInterval() const { return nPowTargetTimespan / nPowTargetSpacing; }
+    int64_t DifficultyAdjustmentInterval(int height) const { return nPowTargetTimespan / GetPowTargetSpacing(height); }
+    bool IsSHA3Active(int height) const { return height >= SHA3Height; }
+    bool IsASERTActive(int height) const { return height > asertActivationHeight; }
+    int64_t GetASERTHalfLife(int height) const
+    {
+        (void)height;
+        return nASERTHalfLife;
+    }
     /** The best chain should have at least this much work */
     uint256 nMinimumChainWork;
     /** By default assume that the signatures in ancestors of this block are valid */

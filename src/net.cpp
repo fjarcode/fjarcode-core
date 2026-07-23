@@ -2373,9 +2373,22 @@ void CConnman::ThreadDNSAddressSeed()
                     addrman.Add(vAdd, resolveSource);
                 } else {
                     // If the seed does not support a subdomain with our desired service bits,
-                    // we make an ADDR_FETCH connection to the DNS resolved peer address for the
-                    // base dns seed domain in chainparams
-                    AddAddrFetch(seed);
+                    // we make ADDR_FETCH connections to DNS resolved peer addresses for the
+                    // base dns seed domain in chainparams.
+                    const auto base_addresses{LookupHost(seed, nMaxIPs, true)};
+                    if (!base_addresses.empty()) {
+                        std::vector<CAddress> vBaseAdd;
+                        for (const CNetAddr& ip : base_addresses) {
+                            CAddress addr = CAddress(CService(ip, m_params.GetDefaultPort()), requiredServiceBits);
+                            addr.nTime = rng.rand_uniform_delay(Now<NodeSeconds>() - 3 * 24h, -4 * 24h);
+                            vBaseAdd.push_back(addr);
+                            found++;
+                            AddAddrFetch(ip.ToStringAddr());
+                        }
+                        addrman.Add(vBaseAdd, resolveSource);
+                    } else {
+                        AddAddrFetch(seed);
+                    }
                 }
             }
             --seeds_right_now;

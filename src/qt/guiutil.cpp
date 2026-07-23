@@ -4,8 +4,8 @@
 
 #include <qt/guiutil.h>
 
-#include <qt/bitcoinaddressvalidator.h>
-#include <qt/bitcoinunits.h>
+#include <qt/fjarcodeaddressvalidator.h>
+#include <qt/fjarcodeunits.h>
 #include <qt/platformstyle.h>
 #include <qt/qvalidatedlineedit.h>
 #include <qt/sendcoinsrecipient.h>
@@ -105,26 +105,12 @@ QFont fixedPitchFont(bool use_embedded_font)
     return QFontDatabase::systemFont(QFontDatabase::FixedFont);
 }
 
-// Return a pre-generated dummy bech32m address (P2TR) with invalid checksum.
+// Return a deterministic dummy address for UI placeholders.
 static std::string DummyAddress(const CChainParams &params)
 {
-    std::string addr;
-    switch (params.GetChainType()) {
-    case ChainType::MAIN:
-        addr = "bc1p35yvjel7srp783ztf8v6jdra7dhfzk5jaun8xz2qp6ws7z80n4tq2jku9f";
-        break;
-    case ChainType::SIGNET:
-    case ChainType::TESTNET:
-    case ChainType::TESTNET4:
-        addr = "tb1p35yvjel7srp783ztf8v6jdra7dhfzk5jaun8xz2qp6ws7z80n4tqa6qnlg";
-        break;
-    case ChainType::REGTEST:
-        addr = "bcrt1p35yvjel7srp783ztf8v6jdra7dhfzk5jaun8xz2qp6ws7z80n4tqsr2427";
-        break;
-    } // no default case, so the compiler can warn about missing cases
-    assert(!addr.empty());
-
-    if (Assume(!IsValidDestinationString(addr))) return addr;
+    (void)params;
+    const std::string addr = EncodeDestination(PKHash{});
+    if (Assume(!addr.empty() && IsValidDestinationString(addr))) return addr;
     return {};
 }
 
@@ -135,7 +121,7 @@ void setupAddressWidget(QValidatedLineEdit *widget, QWidget *parent)
     widget->setFont(fixedPitchFont());
     // We don't want translators to use own addresses in translations
     // and this is the only place, where this address is supplied.
-    widget->setPlaceholderText(QObject::tr("Enter a Bitcoin address (e.g. %1)").arg(
+    widget->setPlaceholderText(QObject::tr("Enter a FJARCODE address (e.g. %1)").arg(
         QString::fromStdString(DummyAddress(Params()))));
     widget->setValidator(new BitcoinAddressEntryValidator(parent));
     widget->setCheckValidator(new BitcoinAddressCheckValidator(parent));
@@ -146,10 +132,10 @@ void AddButtonShortcut(QAbstractButton* button, const QKeySequence& shortcut)
     QObject::connect(new QShortcut(shortcut, button), &QShortcut::activated, [button]() { button->animateClick(); });
 }
 
-bool parseBitcoinURI(const QUrl &uri, SendCoinsRecipient *out)
+bool parseFJARCODEURI(const QUrl &uri, SendCoinsRecipient *out)
 {
-    // return if URI is not valid or is no bitcoin: URI
-    if(!uri.isValid() || uri.scheme() != QString("bitcoin"))
+    // return if URI is not valid or is no fjarcode: URI
+    if(!uri.isValid() || uri.scheme() != QString("fjarcode"))
         return false;
 
     SendCoinsRecipient rv;
@@ -202,17 +188,22 @@ bool parseBitcoinURI(const QUrl &uri, SendCoinsRecipient *out)
     return true;
 }
 
-bool parseBitcoinURI(QString uri, SendCoinsRecipient *out)
+bool parseFJARCODEURI(QString uri, SendCoinsRecipient *out)
 {
     QUrl uriInstance(uri);
-    return parseBitcoinURI(uriInstance, out);
+    return parseFJARCODEURI(uriInstance, out);
 }
 
-QString formatBitcoinURI(const SendCoinsRecipient &info)
+QString formatFJARCODEURI(const SendCoinsRecipient &info)
 {
     bool bech_32 = info.address.startsWith(QString::fromStdString(Params().Bech32HRP() + "1"));
 
-    QString ret = QString("bitcoin:%1").arg(bech_32 ? info.address.toUpper() : info.address);
+    QString addr = info.address;
+    if (addr.startsWith("fjarcode:", Qt::CaseInsensitive)) {
+        addr = addr.mid(QString("fjarcode:").length());
+    }
+
+    QString ret = QString("fjarcode:%1").arg(bech_32 ? addr.toUpper() : addr);
     int paramCount = 0;
 
     if (info.amount)
@@ -236,6 +227,26 @@ QString formatBitcoinURI(const SendCoinsRecipient &info)
     }
 
     return ret;
+}
+
+bool parseBitcoinURI(const QUrl& uri, SendCoinsRecipient* out)
+{
+    return parseFJARCODEURI(uri, out);
+}
+
+bool parseBitcoinURI(QString uri, SendCoinsRecipient* out)
+{
+    return parseFJARCODEURI(uri, out);
+}
+
+QString formatBitcoinURI(const SendCoinsRecipient& info)
+{
+    return formatFJARCODEURI(info);
+}
+
+QString DisplayAddress(const CTxDestination& dest)
+{
+    return QString::fromStdString(EncodeDestination(dest, AddressFormat::CASHADDR));
 }
 
 bool isDust(interfaces::Node& node, const QString& address, const CAmount& amount)
@@ -291,7 +302,9 @@ bool hasEntryData(const QAbstractItemView *view, int column, int role)
 void LoadFont(const QString& file_name)
 {
     const int id = QFontDatabase::addApplicationFont(file_name);
-    assert(id != -1);
+    if (id == -1) {
+        qWarning() << "Failed to load application font:" << file_name;
+    }
 }
 
 QString getDefaultDataDirectory()
@@ -870,7 +883,7 @@ void ThemedLabel::changeEvent(QEvent* e)
 
 void ThemedLabel::updateThemedPixmap()
 {
-    setPixmap(m_platform_style->SingleColorIcon(m_image_filename).pixmap(m_pixmap_width, m_pixmap_height));
+    setPixmap(m_platform_style->TextColorIcon(QIcon(m_image_filename)).pixmap(m_pixmap_width, m_pixmap_height));
 }
 
 ClickableLabel::ClickableLabel(const PlatformStyle* platform_style, QWidget* parent)

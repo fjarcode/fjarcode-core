@@ -230,6 +230,15 @@ bool CScript::IsPayToScriptHash() const
             (*this)[22] == OP_EQUAL);
 }
 
+bool CScript::IsPayToScriptHash32() const
+{
+    // Extra-fast test for OP_HASH256 <32-byte hash> OP_EQUAL scripts.
+    return (this->size() == 35 &&
+            (*this)[0] == OP_HASH256 &&
+            (*this)[1] == 0x20 &&
+            (*this)[34] == OP_EQUAL);
+}
+
 bool CScript::IsPayToWitnessScriptHash() const
 {
     // Extra-fast test for pay-to-witness-script-hash CScripts:

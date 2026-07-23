@@ -7,10 +7,16 @@
 
 #include <common/system.h>
 #include <core_io.h>
+#include <crypto/sha256.h>
+#include <crypto/sha3.h>
 #include <key.h>
 #include <rpc/util.h>
+#include <script/code_quantum_mldsa.h>
+#include <script/code_quantum_mldsa_backend_provider.h>
+#include <script/code_quantum_mldsa_backend_native.h>
 #include <script/script.h>
 #include <script/script_error.h>
+#include <script/script_flags.h>
 #include <script/sigcache.h>
 #include <script/sign.h>
 #include <script/signingprovider.h>
@@ -27,6 +33,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <array>
 
 #include <boost/test/unit_test.hpp>
 
@@ -93,6 +100,11 @@ static ScriptErrorDesc script_errors[]={
     {SCRIPT_ERR_WITNESS_PUBKEYTYPE, "WITNESS_PUBKEYTYPE"},
     {SCRIPT_ERR_OP_CODESEPARATOR, "OP_CODESEPARATOR"},
     {SCRIPT_ERR_SIG_FINDANDDELETE, "SIG_FINDANDDELETE"},
+    {SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING, "CODE_QUANTUM_NONCANONICAL_ENCODING"},
+    {SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_MODE, "CODE_QUANTUM_UNSUPPORTED_MODE"},
+    {SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_ALGORITHM_ID, "CODE_QUANTUM_UNSUPPORTED_ALGORITHM_ID"},
+    {SCRIPT_ERR_CODE_QUANTUM_MISSING_REQUIRED_SIG, "CODE_QUANTUM_MISSING_REQUIRED_SIG"},
+    {SCRIPT_ERR_CODE_QUANTUM_ACTIVATION_STATE, "CODE_QUANTUM_ACTIVATION_STATE"},
 };
 
 static std::string FormatScriptError(ScriptError_t err)
@@ -112,6 +124,261 @@ static ScriptError_t ParseScriptError(const std::string& name)
     BOOST_ERROR("Unknown scripterror \"" << name << "\" in test description");
     return SCRIPT_ERR_UNKNOWN_ERROR;
 }
+
+static int g_mldsa_backend_hook_calls = 0;
+
+static bool CountingMLDSABackendHook(const std::vector<unsigned char>&,
+                                     const std::vector<unsigned char>&,
+                                     const CScript&)
+{
+    ++g_mldsa_backend_hook_calls;
+    return false;
+}
+
+#if defined(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD) && defined(HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+static int g_mldsa_external_bridge_calls = 0;
+static int g_mldsa_external_request_observer_calls = 0;
+static uint8_t g_mldsa_external_result_code_to_return = codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_UNAVAILABLE;
+static std::string g_mldsa_external_callback_trace;
+static uint32_t g_mldsa_external_observed_request_version = 0;
+static uint32_t g_mldsa_external_observed_capability_flags = 0;
+static uint32_t g_mldsa_external_observed_capability_profile_id = 0;
+static std::array<unsigned char, 8> g_mldsa_external_observed_request_magic{};
+static uint32_t g_mldsa_external_observed_request_shape_hash = 0;
+static std::array<unsigned char, 16> g_mldsa_external_observed_interface_id{};
+static const std::vector<unsigned char>* g_mldsa_external_observed_wrapped_sig_ptr = nullptr;
+static const std::vector<unsigned char>* g_mldsa_external_observed_pubkey_ptr = nullptr;
+static const CScript* g_mldsa_external_observed_script_code_ptr = nullptr;
+static size_t g_mldsa_external_observed_der_sig_size = 0;
+static size_t g_mldsa_external_observed_pubkey_payload_size = 0;
+static unsigned char g_mldsa_external_observed_sighash_type = 0;
+static bool g_mldsa_external_observed_pubkey_is_compressed = false;
+static std::array<unsigned char, 13> g_mldsa_external_observed_prehash_domain_tag{};
+static std::array<unsigned char, 32> g_mldsa_external_observed_prehashed_sighash32{};
+static std::array<unsigned char, 32> g_mldsa_external_observed_request_content_digest32{};
+static std::array<unsigned char, 32> g_mldsa_external_observed_request_content_digest32_recomputed{};
+
+static codequantum::MLDSA65BackendAdapterResult ExternalBridgeVerified(const std::vector<unsigned char>&,
+                                                                        const std::vector<unsigned char>&,
+                                                                        const CScript&)
+{
+    ++g_mldsa_external_bridge_calls;
+    return codequantum::MLDSA65BackendAdapterResult::VERIFIED;
+}
+
+static codequantum::MLDSA65BackendAdapterResult ExternalBridgeVerifiedWithTrace(const std::vector<unsigned char>&,
+                                                                                 const std::vector<unsigned char>&,
+                                                                                 const CScript&)
+{
+    ++g_mldsa_external_bridge_calls;
+    g_mldsa_external_callback_trace += "V";
+    return codequantum::MLDSA65BackendAdapterResult::VERIFIED;
+}
+
+static void ObserveExternalRequest(const codequantum::MLDSA65ExternalBackendRequest& request)
+{
+    ++g_mldsa_external_request_observer_calls;
+    g_mldsa_external_observed_request_version = request.request_version;
+    g_mldsa_external_observed_capability_flags = request.capability_flags;
+    g_mldsa_external_observed_capability_profile_id = request.capability_profile_id;
+    g_mldsa_external_observed_request_magic = request.request_magic;
+    g_mldsa_external_observed_request_shape_hash = request.request_shape_hash;
+    g_mldsa_external_observed_interface_id = request.external_backend_interface_id;
+    g_mldsa_external_observed_wrapped_sig_ptr = request.wrapped_sig;
+    g_mldsa_external_observed_pubkey_ptr = request.pubkey;
+    g_mldsa_external_observed_script_code_ptr = request.script_code;
+    g_mldsa_external_observed_der_sig_size = request.der_sig_size;
+    g_mldsa_external_observed_pubkey_payload_size = request.pubkey_payload_size;
+    g_mldsa_external_observed_sighash_type = request.sighash_type;
+    g_mldsa_external_observed_pubkey_is_compressed = request.pubkey_is_compressed;
+    g_mldsa_external_observed_prehash_domain_tag = request.prehash_domain_tag;
+    g_mldsa_external_observed_prehashed_sighash32 = request.prehashed_sighash32;
+    g_mldsa_external_observed_request_content_digest32 = request.request_content_digest32;
+    g_mldsa_external_observed_request_content_digest32_recomputed = codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(request);
+}
+
+static uint8_t ExternalBridgeResultCodeFromRequest(const codequantum::MLDSA65ExternalBackendRequest&)
+{
+    return g_mldsa_external_result_code_to_return;
+}
+
+static uint8_t ExternalBridgeResultCodeFromRequestWithTrace(const codequantum::MLDSA65ExternalBackendRequest&)
+{
+    g_mldsa_external_callback_trace += "R";
+    return g_mldsa_external_result_code_to_return;
+}
+
+static void ObserveExternalRequestWithTrace(const codequantum::MLDSA65ExternalBackendRequest& request)
+{
+    ObserveExternalRequest(request);
+    g_mldsa_external_callback_trace += "O";
+}
+
+static void ObserveExternalRequestMutateDigest(const codequantum::MLDSA65ExternalBackendRequest& request)
+{
+    ObserveExternalRequest(request);
+    g_mldsa_external_callback_trace += "M";
+    const_cast<codequantum::MLDSA65ExternalBackendRequest&>(request).request_shape_hash ^= 1U;
+}
+
+static std::array<unsigned char, 32> ComputeExpectedExternalPrehashedSighash(const CScript& scriptCode,
+                                                                              unsigned char sighash_type)
+{
+    std::array<unsigned char, 32> digest{};
+    CSHA256 hasher;
+    hasher.Write(codequantum::MLDSA65_EXTERNAL_BACKEND_PREHASH_DOMAIN_TAG.data(), codequantum::MLDSA65_EXTERNAL_BACKEND_PREHASH_DOMAIN_TAG.size());
+    if (!scriptCode.empty()) {
+        hasher.Write(scriptCode.data(), scriptCode.size());
+    }
+    hasher.Write(&sighash_type, 1);
+    hasher.Finalize(digest.data());
+    return digest;
+}
+#endif
+
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND)
+static int g_mldsa_native_provider_calls = 0;
+static int g_mldsa_native_default_factory_calls = 0;
+static int g_mldsa_native_signer_calls = 0;
+static std::array<unsigned char, 32> g_mldsa_native_last_sign_prehash{};
+static bool g_mldsa_native_last_sign_prehash_set = false;
+#if defined(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD) && defined(HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+static int g_mldsa_native_external_bridge_verify_calls = 0;
+#endif
+
+static codequantum::MLDSA65BackendAdapterResult NativeProviderVerified(const std::vector<unsigned char>&,
+                                                                       const std::vector<unsigned char>&,
+                                                                       const CScript&)
+{
+    ++g_mldsa_native_provider_calls;
+    return codequantum::MLDSA65BackendAdapterResult::VERIFIED;
+}
+
+static codequantum::MLDSA65BackendAdapterResult NativeProviderUnavailable(const std::vector<unsigned char>&,
+                                                                          const std::vector<unsigned char>&,
+                                                                          const CScript&)
+{
+    ++g_mldsa_native_provider_calls;
+    return codequantum::MLDSA65BackendAdapterResult::UNAVAILABLE;
+}
+
+static codequantum::MLDSA65BackendAdapterResult NativeProviderRejected(const std::vector<unsigned char>&,
+                                                                       const std::vector<unsigned char>&,
+                                                                       const CScript&)
+{
+    ++g_mldsa_native_provider_calls;
+    return codequantum::MLDSA65BackendAdapterResult::REJECTED;
+}
+
+static codequantum::MLDSA65BackendAdapterResult NativeProviderInvalidEnum(const std::vector<unsigned char>&,
+                                                                          const std::vector<unsigned char>&,
+                                                                          const CScript&)
+{
+    ++g_mldsa_native_provider_calls;
+    return static_cast<codequantum::MLDSA65BackendAdapterResult>(255);
+}
+
+static codequantum::MLDSA65BackendAdapterResult NativeProviderImplementationProbe(const std::vector<unsigned char>& wrapped_sig,
+                                                                                  const std::vector<unsigned char>&,
+                                                                                  const CScript&)
+{
+    ++g_mldsa_native_provider_calls;
+    if (!wrapped_sig.empty() && wrapped_sig.back() == static_cast<unsigned char>(SIGHASH_NONE)) {
+        return codequantum::MLDSA65BackendAdapterResult::VERIFIED;
+    }
+    return codequantum::MLDSA65BackendAdapterResult::UNAVAILABLE;
+}
+
+static bool NativeProviderAvailableTrue()
+{
+    return true;
+}
+
+static bool NativeProviderAvailableFalse()
+{
+    return false;
+}
+
+static codequantum::MLDSA65NativeBackendBinding NativeDefaultBindingFactoryVerified()
+{
+    ++g_mldsa_native_default_factory_calls;
+    return {nullptr, NativeProviderVerified};
+}
+
+static codequantum::MLDSA65NativeBackendBinding NativeDefaultBindingFactoryAvailabilityOnly()
+{
+    ++g_mldsa_native_default_factory_calls;
+    return {NativeProviderAvailableTrue, nullptr};
+}
+
+static codequantum::MLDSA65NativeBackendSignResult NativeSignerDeterministic(const std::vector<unsigned char>&,
+                                                                              const std::array<unsigned char, 32>& prehashed_sighash32,
+                                                                              unsigned char sighash_type,
+                                                                              std::vector<unsigned char>& out_wrapped_sig)
+{
+    ++g_mldsa_native_signer_calls;
+    g_mldsa_native_last_sign_prehash = prehashed_sighash32;
+    g_mldsa_native_last_sign_prehash_set = true;
+    out_wrapped_sig = {
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        sighash_type,
+    };
+    return codequantum::MLDSA65NativeBackendSignResult::SIGNED;
+}
+
+static codequantum::MLDSA65NativeBackendSignResult NativeSignerMalformed(const std::vector<unsigned char>&,
+                                                                          const std::array<unsigned char, 32>& prehashed_sighash32,
+                                                                          unsigned char,
+                                                                          std::vector<unsigned char>& out_wrapped_sig)
+{
+    ++g_mldsa_native_signer_calls;
+    g_mldsa_native_last_sign_prehash = prehashed_sighash32;
+    g_mldsa_native_last_sign_prehash_set = true;
+    out_wrapped_sig = {0x01};
+    return codequantum::MLDSA65NativeBackendSignResult::SIGNED;
+}
+
+static codequantum::MLDSA65NativeBackendSignResult NativeSignerInvalidEnum(const std::vector<unsigned char>&,
+                                                                            const std::array<unsigned char, 32>& prehashed_sighash32,
+                                                                            unsigned char,
+                                                                            std::vector<unsigned char>& out_wrapped_sig)
+{
+    ++g_mldsa_native_signer_calls;
+    g_mldsa_native_last_sign_prehash = prehashed_sighash32;
+    g_mldsa_native_last_sign_prehash_set = true;
+    out_wrapped_sig.clear();
+    return static_cast<codequantum::MLDSA65NativeBackendSignResult>(255);
+}
+
+static std::array<unsigned char, 32> ComputeExpectedNativeBuiltinPrehash(const CScript& script_code,
+                                                                          unsigned char sighash_type)
+{
+    std::array<unsigned char, 32> digest{};
+    CSHA256 hasher;
+    hasher.Write(codequantum::MLDSA65_EXTERNAL_BACKEND_PREHASH_DOMAIN_TAG.data(), codequantum::MLDSA65_EXTERNAL_BACKEND_PREHASH_DOMAIN_TAG.size());
+    if (!script_code.empty()) {
+        hasher.Write(script_code.data(), script_code.size());
+    }
+    hasher.Write(&sighash_type, 1);
+    hasher.Finalize(digest.data());
+    return digest;
+}
+
+#if defined(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD) && defined(HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+static bool NativeProviderExternalBridgeAvailable()
+{
+    return codequantum::MLDSA65ExternalBackendBridgeReady();
+}
+
+static codequantum::MLDSA65BackendAdapterResult NativeProviderExternalBridgeVerify(const std::vector<unsigned char>& wrapped_sig,
+                                                                                   const std::vector<unsigned char>& vchPubKey,
+                                                                                   const CScript& scriptCode)
+{
+    ++g_mldsa_native_external_bridge_verify_calls;
+    return codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig, vchPubKey, scriptCode);
+}
+#endif
+#endif
 
 struct ScriptTest : BasicTestingSetup {
 void DoTest(const CScript& scriptPubKey, const CScript& scriptSig, const CScriptWitness& scriptWitness, uint32_t flags, const std::string& message, int scriptError, CAmount nValue = 0)
@@ -1613,6 +1880,1828 @@ BOOST_AUTO_TEST_CASE(script_HasValidOps)
     BOOST_CHECK(!script.HasValidOps());
     script = ToScript("88acc0"_hex); // Script with undefined opcode
     BOOST_CHECK(!script.HasValidOps());
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_envelope_reason_mapping)
+{
+    const KeyData keys;
+    const CScript script_pub_key = CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG;
+    const CScriptWitness empty_witness;
+    constexpr unsigned int cq_flags = SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_FJARCODE_OPCODES;
+
+    DoTest(script_pub_key,
+        CScript() << ParseHex("435101000000"),
+        empty_witness,
+        SCRIPT_VERIFY_STRICTENC,
+        "Code Quantum envelope rejected when activation flag is not set",
+        SCRIPT_ERR_CODE_QUANTUM_ACTIVATION_STATE);
+
+    DoTest(script_pub_key,
+        CScript() << ParseHex("435101ff0000"),
+        empty_witness,
+        cq_flags,
+        "Code Quantum envelope with unsupported mode",
+        SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_MODE);
+
+    DoTest(script_pub_key,
+        CScript() << ParseHex("435101000200"),
+        empty_witness,
+        cq_flags,
+        "Code Quantum envelope with unknown algorithm id",
+        SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_ALGORITHM_ID);
+
+    DoTest(script_pub_key,
+        CScript() << ParseHex("435101000000"),
+        empty_witness,
+        cq_flags,
+        "Code Quantum envelope missing wrapped signature",
+        SCRIPT_ERR_CODE_QUANTUM_MISSING_REQUIRED_SIG);
+
+    DoTest(script_pub_key,
+        CScript() << ParseHex("43510100000201"),
+        empty_witness,
+        cq_flags,
+        "Code Quantum envelope non-canonical length",
+        SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+
+    const CTransaction tx_credit{BuildCreditingTransaction(script_pub_key, 0)};
+    CMutableTransaction tx_spend = BuildSpendingTransaction(CScript(), CScriptWitness(), tx_credit);
+    const uint256 legacy_sighash = SignatureHash(script_pub_key, tx_spend, 0, SIGHASH_ALL, 0, SigVersion::BASE);
+    uint256 sha3_sighash = legacy_sighash;
+    SHA3_256().Write(std::span<const unsigned char>{sha3_sighash.begin(), sha3_sighash.size()}).Finalize(std::span<unsigned char>{sha3_sighash.begin(), sha3_sighash.size()});
+    SHA3_256().Write(std::span<const unsigned char>{sha3_sighash.begin(), sha3_sighash.size()}).Finalize(std::span<unsigned char>{sha3_sighash.begin(), sha3_sighash.size()});
+    SHA3_256().Write(std::span<const unsigned char>{sha3_sighash.begin(), sha3_sighash.size()}).Finalize(std::span<unsigned char>{sha3_sighash.begin(), sha3_sighash.size()});
+
+    std::vector<unsigned char> wrapped_sig;
+    keys.key1C.Sign(sha3_sighash, wrapped_sig);
+    wrapped_sig.push_back(SIGHASH_ALL);
+
+    std::vector<unsigned char> cq_envelope;
+    cq_envelope.reserve(6 + wrapped_sig.size());
+    cq_envelope.push_back('C');
+    cq_envelope.push_back('Q');
+    cq_envelope.push_back(1);
+    cq_envelope.push_back(0);
+    cq_envelope.push_back(1);
+    cq_envelope.push_back(static_cast<unsigned char>(wrapped_sig.size()));
+    cq_envelope.insert(cq_envelope.end(), wrapped_sig.begin(), wrapped_sig.end());
+
+    DoTest(script_pub_key,
+        CScript() << cq_envelope,
+        empty_witness,
+        cq_flags,
+        "Code Quantum envelope with active SHA3-256t algorithm",
+        SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_registry_matrix_frozen)
+{
+    const KeyData keys;
+    const CScript script_pub_key = CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG;
+    const CScriptWitness empty_witness;
+    constexpr unsigned int cq_flags = SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_FJARCODE_OPCODES;
+
+    const CTransaction tx_credit{BuildCreditingTransaction(script_pub_key, 0)};
+    CMutableTransaction tx_spend = BuildSpendingTransaction(CScript(), CScriptWitness(), tx_credit);
+    const uint256 legacy_sighash = SignatureHash(script_pub_key, tx_spend, 0, SIGHASH_ALL, 0, SigVersion::BASE);
+
+    uint256 sha3_sighash = legacy_sighash;
+    SHA3_256().Write(std::span<const unsigned char>{sha3_sighash.begin(), sha3_sighash.size()}).Finalize(std::span<unsigned char>{sha3_sighash.begin(), sha3_sighash.size()});
+    SHA3_256().Write(std::span<const unsigned char>{sha3_sighash.begin(), sha3_sighash.size()}).Finalize(std::span<unsigned char>{sha3_sighash.begin(), sha3_sighash.size()});
+    SHA3_256().Write(std::span<const unsigned char>{sha3_sighash.begin(), sha3_sighash.size()}).Finalize(std::span<unsigned char>{sha3_sighash.begin(), sha3_sighash.size()});
+
+    std::vector<unsigned char> wrapped_sig_legacy;
+    keys.key1C.Sign(legacy_sighash, wrapped_sig_legacy);
+    wrapped_sig_legacy.push_back(SIGHASH_ALL);
+
+    std::vector<unsigned char> wrapped_sig_sha3;
+    keys.key1C.Sign(sha3_sighash, wrapped_sig_sha3);
+    wrapped_sig_sha3.push_back(SIGHASH_ALL);
+
+    const auto make_envelope = [](uint8_t mode, uint8_t algorithm, const std::vector<unsigned char>& wrapped_sig) {
+        std::vector<unsigned char> envelope;
+        envelope.reserve(6 + wrapped_sig.size());
+        envelope.push_back('C');
+        envelope.push_back('Q');
+        envelope.push_back(1);
+        envelope.push_back(mode);
+        envelope.push_back(algorithm);
+        envelope.push_back(static_cast<unsigned char>(wrapped_sig.size()));
+        envelope.insert(envelope.end(), wrapped_sig.begin(), wrapped_sig.end());
+        return envelope;
+    };
+
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/0, wrapped_sig_legacy),
+        empty_witness,
+        cq_flags,
+        "Code Quantum registry matrix mode0-algo0 active",
+        SCRIPT_ERR_OK);
+
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/1, wrapped_sig_sha3),
+        empty_witness,
+        cq_flags,
+        "Code Quantum registry matrix mode0-algo1 active",
+        SCRIPT_ERR_OK);
+
+    // Algorithm 2 is active (ML-DSA-65 native path); current backend contract still rejects at eval.
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/2, wrapped_sig_legacy),
+        empty_witness,
+        cq_flags,
+        "Code Quantum registry matrix known algorithm id 2 (ML-DSA-65) active backend contract",
+        SCRIPT_ERR_EVAL_FALSE);
+
+    // Reject precedence guard: malformed envelopes fail canonical encoding before backend dispatch.
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/2, std::vector<unsigned char>{0x00}),
+        empty_witness,
+        cq_flags,
+        "Code Quantum registry matrix ML-DSA-65 active malformed envelope rejected by canonical encoding",
+        SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+
+    for (const uint8_t unsupported_algorithm : std::vector<uint8_t>{3, 255}) {
+        DoTest(script_pub_key,
+            CScript() << make_envelope(/*mode=*/0, unsupported_algorithm, wrapped_sig_legacy),
+            empty_witness,
+            cq_flags,
+            strprintf("Code Quantum registry matrix unsupported algorithm id %u", unsupported_algorithm),
+            SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_ALGORITHM_ID);
+    }
+
+    for (const uint8_t unsupported_mode : std::vector<uint8_t>{1, 2, 127, 255}) {
+        DoTest(script_pub_key,
+            CScript() << make_envelope(unsupported_mode, /*algorithm=*/0, wrapped_sig_legacy),
+            empty_witness,
+            cq_flags,
+            strprintf("Code Quantum registry matrix unsupported mode id %u", unsupported_mode),
+            SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_MODE);
+    }
+
+    // Cross-path digest mismatch guards: signatures must fail when routed to the wrong digest path.
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/1, wrapped_sig_legacy),
+        empty_witness,
+        cq_flags,
+        "Code Quantum SHA3-256t algorithm with legacy digest signature fails",
+        SCRIPT_ERR_EVAL_FALSE);
+
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/0, wrapped_sig_sha3),
+        empty_witness,
+        cq_flags,
+        "Code Quantum legacy algorithm with SHA3-256t digest signature fails",
+        SCRIPT_ERR_EVAL_FALSE);
+
+    // Keep hashtype validation deterministic for SHA3-256t path.
+    std::vector<unsigned char> wrapped_sig_sha3_bad_hashtype = wrapped_sig_sha3;
+    wrapped_sig_sha3_bad_hashtype.back() = 5;
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/1, wrapped_sig_sha3_bad_hashtype),
+        empty_witness,
+        cq_flags,
+        "Code Quantum SHA3-256t path invalid hashtype rejected",
+        SCRIPT_ERR_SIG_HASHTYPE);
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_active_algorithm_failure_mode_consensus_contract)
+{
+    const KeyData keys;
+    const CScript script_pub_key = CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG;
+    const CScriptWitness empty_witness;
+    constexpr unsigned int cq_flags = SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_FJARCODE_OPCODES;
+
+    const CTransaction tx_credit{BuildCreditingTransaction(script_pub_key, 0)};
+    CMutableTransaction tx_spend = BuildSpendingTransaction(CScript(), CScriptWitness(), tx_credit);
+    const uint256 legacy_sighash = SignatureHash(script_pub_key, tx_spend, 0, SIGHASH_ALL, 0, SigVersion::BASE);
+
+    std::vector<unsigned char> wrapped_sig_legacy;
+    keys.key1C.Sign(legacy_sighash, wrapped_sig_legacy);
+    wrapped_sig_legacy.push_back(SIGHASH_ALL);
+
+    const auto make_envelope = [](uint8_t mode, uint8_t algorithm, const std::vector<unsigned char>& wrapped_sig) {
+        std::vector<unsigned char> envelope;
+        envelope.reserve(6 + wrapped_sig.size());
+        envelope.push_back('C');
+        envelope.push_back('Q');
+        envelope.push_back(1);
+        envelope.push_back(mode);
+        envelope.push_back(algorithm);
+        envelope.push_back(static_cast<unsigned char>(wrapped_sig.size()));
+        envelope.insert(envelope.end(), wrapped_sig.begin(), wrapped_sig.end());
+        return envelope;
+    };
+
+    const auto reject_backend = +[](const std::vector<unsigned char>&,
+                                    const std::vector<unsigned char>&,
+                                    const CScript&) {
+        return codequantum::MLDSA65BackendAdapterResult::REJECTED;
+    };
+    const auto unavailable_backend = +[](const std::vector<unsigned char>&,
+                                         const std::vector<unsigned char>&,
+                                         const CScript&) {
+        return codequantum::MLDSA65BackendAdapterResult::UNAVAILABLE;
+    };
+
+    codequantum::ResetMLDSA65BackendVerifierForTesting();
+    codequantum::ResetMLDSA65BackendResultVerifierForTesting();
+
+    // Hard-failure contract: explicit backend reject under active ML-DSA route.
+    codequantum::SetMLDSA65BackendResultVerifierForTesting(reject_backend);
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/2, wrapped_sig_legacy),
+        empty_witness,
+        cq_flags,
+        "Code Quantum ML-DSA active algorithm hard-failure consensus contract",
+        SCRIPT_ERR_EVAL_FALSE);
+
+    // Soft-failure contract: unavailable backend falls through deterministic
+    // adapter path; consensus-visible result remains eval-false for this tuple.
+    codequantum::SetMLDSA65BackendResultVerifierForTesting(unavailable_backend);
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/2, wrapped_sig_legacy),
+        empty_witness,
+        cq_flags,
+        "Code Quantum ML-DSA active algorithm soft-failure consensus contract",
+        SCRIPT_ERR_EVAL_FALSE);
+
+    codequantum::ResetMLDSA65BackendResultVerifierForTesting();
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_backend_contract_frozen)
+{
+    const CScript nonempty_script = CScript() << OP_TRUE;
+
+    std::vector<unsigned char> wrapped_sig_ok{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+
+    std::vector<unsigned char> pubkey_ok(33, 0x00);
+    pubkey_ok[0] = 0x02;
+
+    std::vector<unsigned char> pubkey_uncompressed_ok(65, 0x00);
+    pubkey_uncompressed_ok[0] = 0x04;
+
+    codequantum::MLDSA65VerifyError verify_error = codequantum::MLDSA65VerifyError::OK;
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature({}, pubkey_ok, nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(std::vector<unsigned char>{0x30, 0x00, static_cast<unsigned char>(SIGHASH_ALL)}, pubkey_ok, nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(std::vector<unsigned char>(74, 0x01), pubkey_ok, nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(std::vector<unsigned char>{0x31, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01, static_cast<unsigned char>(SIGHASH_ALL)}, pubkey_ok, nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(std::vector<unsigned char>{0x30, 0x07, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01, static_cast<unsigned char>(SIGHASH_ALL)}, pubkey_ok, nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(std::vector<unsigned char>{0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01, 0x00}, pubkey_ok, nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, {}, nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, std::vector<unsigned char>(66, 0x02), nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, std::vector<unsigned char>(33, 0x00), nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, std::vector<unsigned char>(65, 0x00), nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, pubkey_ok, CScript()));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed({}, pubkey_ok, nonempty_script, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::WRAPPED_SIG_INVALID));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_ok, std::vector<unsigned char>(33, 0x00), nonempty_script, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::PUBKEY_INVALID));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_ok, pubkey_ok, CScript(), &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::EMPTY_SCRIPT_CODE));
+
+    // Even with a shape-valid input tuple, backend remains deterministic false until crypto wiring lands.
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, pubkey_ok, nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, pubkey_uncompressed_ok, nonempty_script));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_ok, pubkey_ok, nonempty_script, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_backend_hook_contract_frozen)
+{
+    const CScript nonempty_script = CScript() << OP_TRUE;
+    const std::vector<unsigned char> wrapped_sig_ok{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    std::vector<unsigned char> pubkey_ok(33, 0x00);
+    pubkey_ok[0] = 0x02;
+
+    const auto accept_backend = +[](const std::vector<unsigned char>&,
+                                    const std::vector<unsigned char>&,
+                                    const CScript&) {
+        return true;
+    };
+
+    codequantum::MLDSA65VerifyError verify_error = codequantum::MLDSA65VerifyError::BACKEND_NOT_IMPLEMENTED;
+
+    codequantum::SetMLDSA65BackendVerifierForTesting(accept_backend);
+    BOOST_CHECK(codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, pubkey_ok, nonempty_script));
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_ok, pubkey_ok, nonempty_script, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+
+    codequantum::ResetMLDSA65BackendVerifierForTesting();
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, pubkey_ok, nonempty_script));
+
+    const auto reject_backend = +[](const std::vector<unsigned char>&,
+                                    const std::vector<unsigned char>&,
+                                    const CScript&) {
+        return codequantum::MLDSA65BackendAdapterResult::REJECTED;
+    };
+    const auto unavailable_backend = +[](const std::vector<unsigned char>&,
+                                         const std::vector<unsigned char>&,
+                                         const CScript&) {
+        return codequantum::MLDSA65BackendAdapterResult::UNAVAILABLE;
+    };
+
+    codequantum::SetMLDSA65BackendResultVerifierForTesting(reject_backend);
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_ok, pubkey_ok, nonempty_script, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+
+    codequantum::SetMLDSA65BackendResultVerifierForTesting(unavailable_backend);
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_ok, pubkey_ok, nonempty_script, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+
+    codequantum::ResetMLDSA65BackendResultVerifierForTesting();
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_backend_hook_gating_contract_frozen)
+{
+    const CScript nonempty_script = CScript() << OP_TRUE;
+    const std::vector<unsigned char> wrapped_sig_ok{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    std::vector<unsigned char> pubkey_ok(33, 0x00);
+    pubkey_ok[0] = 0x02;
+
+    g_mldsa_backend_hook_calls = 0;
+    codequantum::SetMLDSA65BackendVerifierForTesting(CountingMLDSABackendHook);
+    codequantum::ResetMLDSA65BackendResultVerifierForTesting();
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(std::vector<unsigned char>{}, pubkey_ok, nonempty_script));
+    BOOST_CHECK_EQUAL(g_mldsa_backend_hook_calls, 0);
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, std::vector<unsigned char>(33, 0x00), nonempty_script));
+    BOOST_CHECK_EQUAL(g_mldsa_backend_hook_calls, 0);
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, pubkey_ok, CScript()));
+    BOOST_CHECK_EQUAL(g_mldsa_backend_hook_calls, 0);
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65Signature(wrapped_sig_ok, pubkey_ok, nonempty_script));
+    BOOST_CHECK_EQUAL(g_mldsa_backend_hook_calls, 1);
+
+    codequantum::ResetMLDSA65BackendVerifierForTesting();
+    codequantum::ResetMLDSA65BackendResultVerifierForTesting();
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_backend_adapter_vector_contract_frozen)
+{
+    const CScript script_known_good = CScript() << OP_TRUE << OP_DROP;
+    const CScript script_known_good_2 = CScript() << OP_TRUE;
+    const CScript script_other = CScript() << OP_TRUE;
+    const std::vector<unsigned char> wrapped_sig_known_good{
+        0x30, 0x06, 0x02, 0x01, 0x02, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_NONE),
+    };
+    std::vector<unsigned char> pubkey_known_good(33, 0x11);
+    pubkey_known_good[0] = 0x03;
+
+    const std::vector<unsigned char> wrapped_sig_known_good_2{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x02,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    std::vector<unsigned char> pubkey_known_good_2(33, 0x22);
+    pubkey_known_good_2[0] = 0x02;
+
+    std::vector<unsigned char> wrapped_sig_other = wrapped_sig_known_good;
+    wrapped_sig_other.back() = static_cast<unsigned char>(SIGHASH_ALL);
+
+    std::vector<unsigned char> pubkey_other = pubkey_known_good;
+    pubkey_other[0] = 0x02;
+
+    codequantum::MLDSA65VerifyError verify_error = codequantum::MLDSA65VerifyError::BACKEND_NOT_IMPLEMENTED;
+
+    codequantum::ResetMLDSA65BackendVerifierForTesting();
+
+    BOOST_CHECK(codequantum::VerifyMLDSA65Signature(wrapped_sig_known_good, pubkey_known_good, script_known_good));
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_known_good, pubkey_known_good, script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+
+    BOOST_CHECK(codequantum::VerifyMLDSA65Signature(wrapped_sig_known_good_2, pubkey_known_good_2, script_known_good_2));
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_known_good_2, pubkey_known_good_2, script_known_good_2, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_other, pubkey_known_good, script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_known_good, pubkey_other, script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_known_good, pubkey_known_good, script_other, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_native_provider_contract_frozen)
+{
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND)
+    const CScript script_native = CScript() << OP_FALSE;
+    const std::vector<unsigned char> wrapped_sig_shape_valid{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    const std::vector<unsigned char> wrapped_sig_shape_valid_none{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_NONE),
+    };
+    std::vector<unsigned char> pubkey_shape_valid(33, 0x44);
+    pubkey_shape_valid[0] = 0x02;
+
+    const CScript fallback_script_known_good = CScript() << OP_TRUE << OP_DROP;
+    const std::vector<unsigned char> fallback_sig_known_good{
+        0x30, 0x06, 0x02, 0x01, 0x02, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_NONE),
+    };
+    std::vector<unsigned char> fallback_pubkey_known_good(33, 0x11);
+    fallback_pubkey_known_good[0] = 0x03;
+    CScript script_non_vector = script_native;
+    script_non_vector << OP_1;
+
+    codequantum::MLDSA65VerifyError verify_error = codequantum::MLDSA65VerifyError::BACKEND_NOT_IMPLEMENTED;
+    codequantum::ResetMLDSA65NativeBackendTelemetryStateForTesting();
+
+    g_mldsa_native_provider_calls = 0;
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderVerified});
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65NativeBackend({}, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    auto telemetry = codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(telemetry.last_tag),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendTelemetryTag::REJECT_WRAPPED_SIG));
+    BOOST_CHECK_EQUAL(telemetry.reject_wrapped_sig, static_cast<uint64_t>(1));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65NativeBackend(wrapped_sig_shape_valid, std::vector<unsigned char>{}, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    telemetry = codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(telemetry.last_tag),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendTelemetryTag::REJECT_PUBKEY));
+    BOOST_CHECK_EQUAL(telemetry.reject_pubkey, static_cast<uint64_t>(1));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65NativeBackend(wrapped_sig_shape_valid, pubkey_shape_valid, CScript())),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    telemetry = codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(telemetry.last_tag),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendTelemetryTag::REJECT_EMPTY_SCRIPT));
+    BOOST_CHECK_EQUAL(telemetry.reject_empty_script, static_cast<uint64_t>(1));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 0);
+
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    telemetry = codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_EQUAL(telemetry.init_attempts, static_cast<uint64_t>(0));
+    BOOST_CHECK_GE(telemetry.verify_invocations, static_cast<uint64_t>(1));
+    BOOST_CHECK_EQUAL(telemetry.verified, static_cast<uint64_t>(1));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(telemetry.last_tag),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendTelemetryTag::VERIFIED));
+
+    // Native VERIFIED short-circuit contract: for a non-vector tuple that the
+    // deterministic adapter fallback would reject, native VERIFIED must win.
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderUnavailable});
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 2);
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderVerified});
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 3);
+
+    // Native REJECTED short-circuit contract: for a known-good fallback tuple,
+    // native REJECTED must win over deterministic adapter verification.
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderRejected});
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 4);
+    telemetry = codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_EQUAL(telemetry.reject_backend, static_cast<uint64_t>(1));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(telemetry.last_tag),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendTelemetryTag::REJECT_BACKEND));
+
+    // Native return-code normalization contract: unknown enum values map to
+    // UNAVAILABLE and therefore fall through to deterministic adapter behavior.
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderInvalidEnum});
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 6);
+    telemetry = codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_GE(telemetry.reject_unavailable, static_cast<uint64_t>(1));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(telemetry.last_tag),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendTelemetryTag::REJECT_UNAVAILABLE));
+
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderUnavailable});
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 7);
+
+    // Landing-seam contract: implementation-binding test override takes
+    // precedence over default binding during lazy init.
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    codequantum::ResetMLDSA65NativeBackendTelemetryStateForTesting();
+    codequantum::SetDefaultMLDSA65NativeBackendBindingFactoryForTesting(NativeDefaultBindingFactoryVerified);
+    codequantum::SetMLDSA65NativeBackendImplementationBindingForTesting({nullptr, NativeProviderRejected});
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+    telemetry = codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_GE(telemetry.init_attempts, static_cast<uint64_t>(1));
+    BOOST_CHECK_GE(telemetry.verify_invocations, static_cast<uint64_t>(1));
+
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+
+    // Implementation-seam flap stability: repeated set->reset->set transitions
+    // must keep lazy-init precedence deterministic without sticky state leaks.
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    codequantum::SetDefaultMLDSA65NativeBackendBindingFactoryForTesting(NativeDefaultBindingFactoryVerified);
+
+    codequantum::SetMLDSA65NativeBackendImplementationBindingForTesting({nullptr, NativeProviderRejected});
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+
+    codequantum::SetMLDSA65NativeBackendImplementationBindingForTesting({nullptr, NativeProviderVerified});
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    BOOST_CHECK(codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK(codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+
+    // Controlled non-noop implementation seam contract: a test-only
+    // implementation callback can actively verify specific tuples.
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+
+    codequantum::SetMLDSA65NativeBackendImplementationBindingForTesting({nullptr, NativeProviderImplementationProbe});
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid_none, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid_none, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 0);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    // Precedence contract: explicit provider register overrides pending
+    // implementation override once initialized; implementation override wins
+    // again after clear (re-triggering lazy init).
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+
+    codequantum::SetMLDSA65NativeBackendImplementationBindingForTesting({nullptr, NativeProviderRejected});
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderVerified});
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+
+    // Binding-shape contract: availability-only bindings are unsupported and must
+    // fall back to deterministic adapter behavior.
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+    codequantum::RegisterMLDSA65NativeBackendBinding({NativeProviderAvailableTrue, nullptr});
+    BOOST_CHECK(!codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 0);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    codequantum::SetDefaultMLDSA65NativeBackendBindingFactoryForTesting(NativeDefaultBindingFactoryVerified);
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 2);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 3);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 2);
+
+    // Register last-writer contract: with consecutive register calls, the most
+    // recent binding must deterministically control verify dispatch.
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+
+    codequantum::SetMLDSA65NativeBackendImplementationBindingForTesting({nullptr, NativeProviderVerified});
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderRejected});
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderVerified});
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderRejected});
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 2);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 3);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+
+    // Lazy-init half-binding contract: availability-only default factory output
+    // is unsupported and must keep native backend unavailable with adapter fallback.
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    codequantum::SetDefaultMLDSA65NativeBackendBindingFactoryForTesting(NativeDefaultBindingFactoryAvailabilityOnly);
+    g_mldsa_native_default_factory_calls = 0;
+
+    BOOST_CHECK(!codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 3);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+
+    // Disable-state equivalence contract: explicit null binding registration is
+    // behaviorally equivalent to clear and allows lazy default re-init.
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    codequantum::SetDefaultMLDSA65NativeBackendBindingFactoryForTesting(NativeDefaultBindingFactoryVerified);
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, nullptr});
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+
+    // Availability side-effect contract: once lazy init is completed, repeated
+    // availability queries must not mutate provider/default-factory call counts.
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    codequantum::SetDefaultMLDSA65NativeBackendBindingFactoryForTesting(NativeDefaultBindingFactoryVerified);
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+
+    BOOST_CHECK(codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 0);
+    BOOST_CHECK(codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 0);
+
+    // Bridge-ready gating and handoff contract in native provider path.
+#if defined(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD) && defined(HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+    codequantum::ResetMLDSA65ExternalBackendVerifierForTesting();
+    codequantum::ResetMLDSA65ExternalBackendRequestObserverForTesting();
+    codequantum::ResetMLDSA65ExternalBackendResultCodeVerifierForTesting();
+    g_mldsa_native_external_bridge_verify_calls = 0;
+    g_mldsa_external_bridge_calls = 0;
+    codequantum::RegisterMLDSA65NativeBackendBinding({NativeProviderExternalBridgeAvailable, NativeProviderExternalBridgeVerify});
+
+    // Gating purity: when bridge is not ready, provider stays unavailable,
+    // fallback is deterministic, and no external-native verify dispatch occurs.
+    BOOST_CHECK(!codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_external_bridge_verify_calls, 0);
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 0);
+
+    // Positive handoff: once bridge becomes ready, same binding transitions to
+    // external dispatch and native path result changes accordingly.
+    codequantum::SetMLDSA65ExternalBackendVerifierForTesting(ExternalBridgeVerified);
+    BOOST_CHECK(codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_external_bridge_verify_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 1);
+
+    // Negative handoff: if external bridge readiness is removed, same binding
+    // must become unavailable again and return to deterministic fallback.
+    codequantum::ResetMLDSA65ExternalBackendVerifierForTesting();
+    BOOST_CHECK(!codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_external_bridge_verify_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 1);
+
+    // Bridge flap stability: if readiness is restored again on the same binding,
+    // dispatch should resume without sticky unavailable state.
+    codequantum::SetMLDSA65ExternalBackendVerifierForTesting(ExternalBridgeVerified);
+    BOOST_CHECK(codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_external_bridge_verify_calls, 2);
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 2);
+
+    // Counter-scope purity: readiness polling alone must not advance external
+    // dispatch counters; only verify dispatch in ready state may do so.
+    const int native_external_calls_before_poll = g_mldsa_native_external_bridge_verify_calls;
+    const int external_bridge_calls_before_poll = g_mldsa_external_bridge_calls;
+    BOOST_CHECK(codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK(codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK_EQUAL(g_mldsa_native_external_bridge_verify_calls, native_external_calls_before_poll);
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, external_bridge_calls_before_poll);
+
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_external_bridge_verify_calls, native_external_calls_before_poll + 1);
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, external_bridge_calls_before_poll + 1);
+
+    // Native handoff callback-isolation contract: external observer/result-code
+    // hooks must preserve callback ordering and verifier bypass behavior.
+    codequantum::SetMLDSA65ExternalBackendVerifierForTesting(ExternalBridgeVerifiedWithTrace);
+    codequantum::SetMLDSA65ExternalBackendRequestObserverForTesting(ObserveExternalRequestWithTrace);
+    codequantum::SetMLDSA65ExternalBackendResultCodeVerifierForTesting(ExternalBridgeResultCodeFromRequestWithTrace);
+    g_mldsa_external_result_code_to_return = codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_REJECTED;
+    g_mldsa_external_callback_trace.clear();
+    g_mldsa_external_bridge_calls = 0;
+    g_mldsa_native_external_bridge_verify_calls = 0;
+    codequantum::RegisterMLDSA65NativeBackendBinding({NativeProviderExternalBridgeAvailable, NativeProviderExternalBridgeVerify});
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_external_callback_trace, std::string{"OR"});
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 0);
+    BOOST_CHECK_EQUAL(g_mldsa_native_external_bridge_verify_calls, 1);
+
+    codequantum::ResetMLDSA65ExternalBackendResultCodeVerifierForTesting();
+    g_mldsa_external_callback_trace.clear();
+    g_mldsa_external_bridge_calls = 0;
+    g_mldsa_native_external_bridge_verify_calls = 0;
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_external_callback_trace, std::string{"OV"});
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_external_bridge_verify_calls, 1);
+
+    // Mutation rejection through native handoff: observer mutation must trigger
+    // digest immutability rejection before external verifier dispatch.
+    codequantum::SetMLDSA65ExternalBackendVerifierForTesting(ExternalBridgeVerifiedWithTrace);
+    codequantum::SetMLDSA65ExternalBackendRequestObserverForTesting(ObserveExternalRequestMutateDigest);
+    g_mldsa_external_callback_trace.clear();
+    g_mldsa_external_bridge_calls = 0;
+    g_mldsa_native_external_bridge_verify_calls = 0;
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_external_callback_trace, std::string{"M"});
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 0);
+    BOOST_CHECK_EQUAL(g_mldsa_native_external_bridge_verify_calls, 1);
+
+    codequantum::SetMLDSA65ExternalBackendRequestObserverForTesting(ObserveExternalRequestWithTrace);
+#endif
+
+    // Verify-dispatch purity contract: when native verify returns UNAVAILABLE,
+    // fallback remains deterministic and does not mutate lazy-init/provider state.
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderUnavailable});
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(fallback_sig_known_good, fallback_pubkey_known_good, fallback_script_known_good, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_native, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 2);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    // Cleanup/no-leakage contract: after explicit reset sequence, provider state
+    // must return to disabled baseline with deterministic adapter fallback.
+    codequantum::SetDefaultMLDSA65NativeBackendBindingFactoryForTesting(NativeDefaultBindingFactoryVerified);
+    codequantum::SetMLDSA65NativeBackendImplementationBindingForTesting({nullptr, NativeProviderRejected});
+    codequantum::RegisterMLDSA65NativeBackendBinding({nullptr, NativeProviderVerified});
+    codequantum::ClearMLDSA65NativeBackendBinding();
+
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    g_mldsa_native_provider_calls = 0;
+    g_mldsa_native_default_factory_calls = 0;
+
+    BOOST_CHECK(!codequantum::MLDSA65NativeBackendAvailable());
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_provider_calls, 0);
+    BOOST_CHECK_EQUAL(g_mldsa_native_default_factory_calls, 0);
+
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+#if defined(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD) && defined(HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+    codequantum::ResetMLDSA65ExternalBackendVerifierForTesting();
+    codequantum::ResetMLDSA65ExternalBackendRequestObserverForTesting();
+    codequantum::ResetMLDSA65ExternalBackendResultCodeVerifierForTesting();
+#endif
+#endif
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_native_builtin_secp256k1_verify_contract)
+{
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND) && defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_VERIFY)
+    const KeyData keys;
+    const CScript script_code = CScript() << OP_TRUE << OP_DROP << OP_1;
+    constexpr unsigned char sighash_type = static_cast<unsigned char>(SIGHASH_ALL);
+
+    const std::array<unsigned char, 32> digest =
+        ComputeExpectedNativeBuiltinPrehash(script_code, sighash_type);
+    const uint256 digest_uint256(std::span<const unsigned char>(digest.data(), digest.size()));
+
+    std::vector<unsigned char> der_sig;
+    BOOST_REQUIRE(keys.key1C.Sign(digest_uint256, der_sig));
+    std::vector<unsigned char> wrapped_sig = der_sig;
+    wrapped_sig.push_back(sighash_type);
+    const std::vector<unsigned char> pubkey = ToByteVector(keys.pubkey1C);
+
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    codequantum::ResetMLDSA65NativeBackendTelemetryStateForTesting();
+
+    codequantum::MLDSA65VerifyError verify_error = codequantum::MLDSA65VerifyError::BACKEND_NOT_IMPLEMENTED;
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig, pubkey, script_code, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+
+    const codequantum::MLDSA65NativeBackendTelemetryState telemetry_verified =
+        codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_GE(telemetry_verified.init_attempts, static_cast<uint64_t>(1));
+    BOOST_CHECK_GE(telemetry_verified.verify_invocations, static_cast<uint64_t>(1));
+    BOOST_CHECK_GE(telemetry_verified.verified, static_cast<uint64_t>(1));
+
+    std::vector<unsigned char> wrapped_sig_tampered = wrapped_sig;
+    BOOST_REQUIRE(wrapped_sig_tampered.size() > 2);
+    wrapped_sig_tampered[wrapped_sig_tampered.size() - 2] ^= 0x01;
+
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_tampered, pubkey, script_code, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+
+    const codequantum::MLDSA65NativeBackendTelemetryState telemetry_rejected =
+        codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_GE(telemetry_rejected.reject_backend, static_cast<uint64_t>(1));
+
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+#else
+    BOOST_CHECK(true);
+#endif
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_native_signer_callback_contract)
+{
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND)
+    const std::vector<unsigned char> key_material(32, 0x42);
+    const CScript script_code = CScript() << OP_TRUE;
+    const CScript script_code_alt = CScript() << OP_FALSE << OP_1;
+    constexpr unsigned char sighash_type = static_cast<unsigned char>(SIGHASH_ALL);
+    constexpr unsigned char sighash_type_alt = static_cast<unsigned char>(SIGHASH_NONE);
+
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ResetMLDSA65NativeBackendSignerForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+
+    std::vector<unsigned char> out_wrapped_sig;
+    out_wrapped_sig = {0x42};
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::SignMLDSA65NativeBackend(key_material, script_code, sighash_type, out_wrapped_sig)),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendSignResult::UNAVAILABLE));
+    BOOST_CHECK(out_wrapped_sig.empty());
+
+    // Deterministic unavailable fallback policy: unavailable bindings must not
+    // leave stale output bytes in the signature buffer.
+    g_mldsa_native_signer_calls = 0;
+    codequantum::RegisterMLDSA65NativeBackendBinding({NativeProviderAvailableFalse, nullptr, NativeSignerDeterministic});
+    out_wrapped_sig = {0x99};
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::SignMLDSA65NativeBackend(key_material, script_code, sighash_type, out_wrapped_sig)),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendSignResult::UNAVAILABLE));
+    BOOST_CHECK(out_wrapped_sig.empty());
+    BOOST_CHECK_EQUAL(g_mldsa_native_signer_calls, 0);
+    codequantum::ClearMLDSA65NativeBackendBinding();
+
+    g_mldsa_native_signer_calls = 0;
+    g_mldsa_native_last_sign_prehash_set = false;
+    codequantum::SetMLDSA65NativeBackendSignerForTesting(NativeSignerDeterministic);
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::SignMLDSA65NativeBackend(key_material, script_code, sighash_type, out_wrapped_sig)),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendSignResult::SIGNED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_signer_calls, 1);
+    BOOST_CHECK(!out_wrapped_sig.empty());
+    BOOST_CHECK_EQUAL(out_wrapped_sig.back(), sighash_type);
+    BOOST_CHECK(g_mldsa_native_last_sign_prehash_set);
+    const std::array<unsigned char, 32> expected_prehash =
+        codequantum::ComputeMLDSA65NativeSigningPrehash(script_code, sighash_type);
+    BOOST_CHECK(g_mldsa_native_last_sign_prehash == expected_prehash);
+
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::SignMLDSA65NativeBackend(key_material, script_code_alt, sighash_type_alt, out_wrapped_sig)),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendSignResult::SIGNED));
+    const std::array<unsigned char, 32> expected_prehash_alt =
+        codequantum::ComputeMLDSA65NativeSigningPrehash(script_code_alt, sighash_type_alt);
+    BOOST_CHECK(g_mldsa_native_last_sign_prehash == expected_prehash_alt);
+    BOOST_CHECK(expected_prehash != expected_prehash_alt);
+
+    g_mldsa_native_signer_calls = 0;
+    codequantum::SetMLDSA65NativeBackendSignerForTesting(NativeSignerMalformed);
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::SignMLDSA65NativeBackend(key_material, script_code, sighash_type, out_wrapped_sig)),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendSignResult::REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_native_signer_calls, 1);
+    BOOST_CHECK(out_wrapped_sig.empty());
+
+    g_mldsa_native_signer_calls = 0;
+    codequantum::SetMLDSA65NativeBackendSignerForTesting(NativeSignerInvalidEnum);
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::SignMLDSA65NativeBackend(key_material, script_code, sighash_type, out_wrapped_sig)),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendSignResult::UNAVAILABLE));
+    BOOST_CHECK_EQUAL(g_mldsa_native_signer_calls, 1);
+    BOOST_CHECK(out_wrapped_sig.empty());
+
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::SignMLDSA65NativeBackend({}, script_code, sighash_type, out_wrapped_sig)),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendSignResult::REJECTED));
+    BOOST_CHECK(out_wrapped_sig.empty());
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::SignMLDSA65NativeBackend(key_material, CScript(), sighash_type, out_wrapped_sig)),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendSignResult::REJECTED));
+    BOOST_CHECK(out_wrapped_sig.empty());
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::SignMLDSA65NativeBackend(key_material, script_code, 0x00, out_wrapped_sig)),
+                      static_cast<unsigned char>(codequantum::MLDSA65NativeBackendSignResult::REJECTED));
+    BOOST_CHECK(out_wrapped_sig.empty());
+
+    codequantum::ResetMLDSA65NativeBackendSignerForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+#else
+    BOOST_CHECK(true);
+#endif
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_native_scaffold_default_handoff_contract_frozen)
+{
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND) && defined(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD) && defined(HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+    const CScript script_native = CScript() << OP_FALSE;
+    const std::vector<unsigned char> wrapped_sig_shape_valid{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    std::vector<unsigned char> pubkey_shape_valid(33, 0x44);
+    pubkey_shape_valid[0] = 0x02;
+    CScript script_non_vector = script_native;
+    script_non_vector << OP_1;
+
+    codequantum::MLDSA65VerifyError verify_error = codequantum::MLDSA65VerifyError::BACKEND_NOT_IMPLEMENTED;
+
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+    codequantum::ResetMLDSA65NativeBackendTelemetryStateForTesting();
+    codequantum::ResetMLDSA65ExternalBackendRequestObserverForTesting();
+    codequantum::ResetMLDSA65ExternalBackendResultCodeVerifierForTesting();
+    g_mldsa_external_bridge_calls = 0;
+
+    // Without an external verifier callback, default bridge binding is present
+    // but not ready; non-vector tuple must still reject.
+    codequantum::ResetMLDSA65ExternalBackendVerifierForTesting();
+    BOOST_CHECK(!codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::BACKEND_REJECTED));
+
+    // Once bridge verifier is installed, default lazy-init handoff must route
+    // through native provider and verify same non-vector tuple successfully.
+    codequantum::SetMLDSA65ExternalBackendVerifierForTesting(ExternalBridgeVerified);
+    BOOST_CHECK(codequantum::VerifyMLDSA65SignatureDetailed(wrapped_sig_shape_valid, pubkey_shape_valid, script_non_vector, &verify_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(verify_error), static_cast<unsigned char>(codequantum::MLDSA65VerifyError::OK));
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 1);
+
+    const codequantum::MLDSA65NativeBackendTelemetryState telemetry =
+        codequantum::GetMLDSA65NativeBackendTelemetryState();
+    BOOST_CHECK_GE(telemetry.init_attempts, static_cast<uint64_t>(1));
+    BOOST_CHECK_GE(telemetry.verify_invocations, static_cast<uint64_t>(1));
+    BOOST_CHECK_GE(telemetry.verified, static_cast<uint64_t>(1));
+
+    codequantum::ResetMLDSA65ExternalBackendVerifierForTesting();
+    codequantum::ResetMLDSA65ExternalBackendRequestObserverForTesting();
+    codequantum::ResetMLDSA65ExternalBackendResultCodeVerifierForTesting();
+    codequantum::ResetDefaultMLDSA65NativeBackendBindingFactoryForTesting();
+    codequantum::ResetMLDSA65NativeBackendImplementationBindingForTesting();
+    codequantum::ClearMLDSA65NativeBackendBinding();
+#endif
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_external_backend_scaffold_contract_frozen)
+{
+#if defined(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD)
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendScaffoldEnabled());
+#else
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendScaffoldEnabled());
+#endif
+
+#if defined(HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendHeaderDetected());
+#else
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendHeaderDetected());
+#endif
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_scripthash32_signing_recursion_contract)
+{
+    FillableSigningProvider keystore;
+    const CKey key = GenerateRandomKey(/*compressed=*/true);
+    BOOST_REQUIRE(keystore.AddKey(key));
+
+    const CScript redeem_script = GetScriptForDestination(PKHash(key.GetPubKey()));
+    BOOST_REQUIRE(keystore.AddCScript(redeem_script));
+
+    const uint256 redeem_hash256 = Hash(redeem_script);
+    const CScript quantum_script_pub_key = CScript() << OP_HASH256 << ToByteVector(redeem_hash256) << OP_EQUAL;
+    BOOST_CHECK(quantum_script_pub_key.IsPayToScriptHash32());
+
+    CMutableTransaction tx_from = BuildCreditingTransaction(quantum_script_pub_key);
+    CMutableTransaction tx_to = BuildSpendingTransaction(CScript(), CScriptWitness(), CTransaction(tx_from));
+
+    SignatureData dummy;
+    BOOST_CHECK(SignSignature(keystore, CTransaction(tx_from), tx_to, 0, SIGHASH_ALL, dummy));
+
+    const SignatureData sig_data = DataFromTransaction(tx_to, 0, tx_from.vout[0]);
+    BOOST_CHECK(!sig_data.scriptSig.empty());
+
+    ScriptError serror = SCRIPT_ERR_OK;
+    BOOST_CHECK(VerifyScript(tx_to.vin[0].scriptSig,
+                             tx_from.vout[0].scriptPubKey,
+                             &tx_to.vin[0].scriptWitness,
+                             SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC,
+                             MutableTransactionSignatureChecker(&tx_to,
+                                                                 0,
+                                                                 tx_from.vout[0].nValue,
+                                                                 MissingDataBehavior::FAIL),
+                             &serror));
+    BOOST_CHECK_EQUAL(serror, SCRIPT_ERR_OK);
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_external_backend_bridge_contract_frozen)
+{
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendRequestVersionSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_REQUEST_VERSION));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestVersionSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_REQUEST_VERSION + 1));
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendCapabilitiesSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITIES_BASELINE));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendCapabilitiesSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITY_PREHASHED_SIGHASH));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendCapabilitiesSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITIES_BASELINE | (1U << 31)));
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendCapabilityProfileSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITY_PROFILE_BASELINE_V1));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendCapabilityProfileSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITY_PROFILE_BASELINE_V1 + 1));
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendInterfaceIdSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_INTERFACE_ID));
+    std::array<unsigned char, 16> unsupported_interface_id = codequantum::MLDSA65_EXTERNAL_BACKEND_INTERFACE_ID;
+    unsupported_interface_id[15] = '2';
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendInterfaceIdSupported(unsupported_interface_id));
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendResultCodeSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_VERIFIED));
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendResultCodeSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_REJECTED));
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendResultCodeSupported(codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_UNAVAILABLE));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendResultCodeSupported(static_cast<uint8_t>(255)));
+    BOOST_CHECK_EQUAL(codequantum::MLDSA65_EXTERNAL_BACKEND_MAX_WRAPPED_SIG_SIZE, static_cast<size_t>(73));
+    BOOST_CHECK_EQUAL(codequantum::MLDSA65_EXTERNAL_BACKEND_MAX_PUBKEY_SIZE, static_cast<size_t>(65));
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendRequestSizesSupported(/*wrapped_sig_size=*/9,
+                                                                         /*pubkey_size=*/33,
+                                                                         /*der_sig_size=*/8,
+                                                                         /*pubkey_payload_size=*/32));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestSizesSupported(/*wrapped_sig_size=*/0,
+                                                                          /*pubkey_size=*/33,
+                                                                          /*der_sig_size=*/8,
+                                                                          /*pubkey_payload_size=*/32));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestSizesSupported(/*wrapped_sig_size=*/74,
+                                                                          /*pubkey_size=*/33,
+                                                                          /*der_sig_size=*/8,
+                                                                          /*pubkey_payload_size=*/32));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestSizesSupported(/*wrapped_sig_size=*/9,
+                                                                          /*pubkey_size=*/0,
+                                                                          /*der_sig_size=*/8,
+                                                                          /*pubkey_payload_size=*/32));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestSizesSupported(/*wrapped_sig_size=*/9,
+                                                                          /*pubkey_size=*/66,
+                                                                          /*der_sig_size=*/8,
+                                                                          /*pubkey_payload_size=*/32));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestSizesSupported(/*wrapped_sig_size=*/9,
+                                                                          /*pubkey_size=*/33,
+                                                                          /*der_sig_size=*/7,
+                                                                          /*pubkey_payload_size=*/32));
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestSizesSupported(/*wrapped_sig_size=*/9,
+                                                                          /*pubkey_size=*/33,
+                                                                          /*der_sig_size=*/8,
+                                                                          /*pubkey_payload_size=*/31));
+    const std::vector<unsigned char> helper_wrapped_sig_shape_valid{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    std::vector<unsigned char> helper_pubkey_shape_valid(33, 0x66);
+    helper_pubkey_shape_valid[0] = 0x02;
+    const CScript helper_script_native = CScript() << OP_FALSE;
+    codequantum::MLDSA65ExternalBackendRequest pointer_helper_ok{
+        codequantum::MLDSA65_EXTERNAL_BACKEND_REQUEST_VERSION,
+        codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITIES_BASELINE,
+        codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITY_PROFILE_BASELINE_V1,
+        codequantum::MLDSA65_EXTERNAL_BACKEND_REQUEST_MAGIC,
+        codequantum::MLDSA65_EXTERNAL_BACKEND_REQUEST_SHAPE_HASH,
+        codequantum::MLDSA65_EXTERNAL_BACKEND_INTERFACE_ID,
+        &helper_wrapped_sig_shape_valid,
+        &helper_pubkey_shape_valid,
+        &helper_script_native,
+        static_cast<size_t>(0),
+        static_cast<size_t>(8),
+        static_cast<size_t>(1),
+        static_cast<size_t>(32),
+        static_cast<unsigned char>(SIGHASH_ALL),
+        true,
+        codequantum::MLDSA65_EXTERNAL_BACKEND_PREHASH_DOMAIN_TAG,
+        std::array<unsigned char, 32>{},
+        std::array<unsigned char, 32>{},
+    };
+    pointer_helper_ok.request_content_digest32 = codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(pointer_helper_ok);
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendRequestPointersSupported(pointer_helper_ok));
+    codequantum::MLDSA65ExternalBackendRequest pointer_helper_bad = pointer_helper_ok;
+    pointer_helper_bad.wrapped_sig = nullptr;
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestPointersSupported(pointer_helper_bad));
+    pointer_helper_bad = pointer_helper_ok;
+    pointer_helper_bad.pubkey = nullptr;
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestPointersSupported(pointer_helper_bad));
+    pointer_helper_bad = pointer_helper_ok;
+    pointer_helper_bad.script_code = nullptr;
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendRequestPointersSupported(pointer_helper_bad));
+
+    const std::array<unsigned char, 32> digest_baseline =
+        codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(pointer_helper_ok);
+    BOOST_CHECK((digest_baseline != std::array<unsigned char, 32>{}));
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(pointer_helper_ok) == digest_baseline);
+
+    // Stability contract: request_content_digest32 is output metadata and must not feed into digest input.
+    codequantum::MLDSA65ExternalBackendRequest digest_stability = pointer_helper_ok;
+    digest_stability.request_content_digest32[0] = 0x42;
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_stability) == digest_baseline);
+
+    codequantum::MLDSA65ExternalBackendRequest digest_mutation = pointer_helper_ok;
+    digest_mutation.request_version += 1;
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_mutation) != digest_baseline);
+
+    // LE/full-width contract: higher-order byte mutations must affect digest too.
+    const codequantum::MLDSA65ExternalBackendRequest digest_version_lowbyte = digest_mutation;
+    codequantum::MLDSA65ExternalBackendRequest digest_version_nextbyte = pointer_helper_ok;
+    digest_version_nextbyte.request_version += 0x100;
+    const std::array<unsigned char, 32> digest_version_nextbyte_hash =
+        codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_version_nextbyte);
+    BOOST_CHECK(digest_version_nextbyte_hash != digest_baseline);
+    BOOST_CHECK(digest_version_nextbyte_hash != codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_version_lowbyte));
+
+    codequantum::MLDSA65ExternalBackendRequest digest_offset_nextbyte = pointer_helper_ok;
+    digest_offset_nextbyte.der_sig_offset = static_cast<size_t>(0x100);
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_offset_nextbyte) != digest_baseline);
+
+    digest_mutation = pointer_helper_ok;
+    digest_mutation.capability_flags ^= codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITY_PREHASHED_SIGHASH;
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_mutation) != digest_baseline);
+
+    digest_mutation = pointer_helper_ok;
+    digest_mutation.external_backend_interface_id[0] ^= 1;
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_mutation) != digest_baseline);
+
+    digest_mutation = pointer_helper_ok;
+    digest_mutation.sighash_type = static_cast<unsigned char>(SIGHASH_NONE);
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_mutation) != digest_baseline);
+
+    std::vector<unsigned char> helper_wrapped_sig_shape_valid_alt = helper_wrapped_sig_shape_valid;
+    helper_wrapped_sig_shape_valid_alt[4] ^= 1;
+    digest_mutation = pointer_helper_ok;
+    digest_mutation.wrapped_sig = &helper_wrapped_sig_shape_valid_alt;
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_mutation) != digest_baseline);
+
+    std::vector<unsigned char> helper_pubkey_shape_valid_alt = helper_pubkey_shape_valid;
+    helper_pubkey_shape_valid_alt[10] ^= 1;
+    digest_mutation = pointer_helper_ok;
+    digest_mutation.pubkey = &helper_pubkey_shape_valid_alt;
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_mutation) != digest_baseline);
+
+    const CScript helper_script_native_alt = CScript() << OP_1;
+    digest_mutation = pointer_helper_ok;
+    digest_mutation.script_code = &helper_script_native_alt;
+    BOOST_CHECK(codequantum::ComputeMLDSA65ExternalBackendRequestContentDigest(digest_mutation) != digest_baseline);
+
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::TranslateMLDSA65ExternalBackendResultCode(codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_VERIFIED)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::VERIFIED));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::TranslateMLDSA65ExternalBackendResultCode(codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_REJECTED)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::TranslateMLDSA65ExternalBackendResultCode(codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_UNAVAILABLE)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::UNAVAILABLE));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(codequantum::TranslateMLDSA65ExternalBackendResultCode(static_cast<uint8_t>(255))),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::UNAVAILABLE));
+
+    const CScript script_native = CScript() << OP_FALSE;
+    const std::vector<unsigned char> wrapped_sig_shape_valid{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    const std::vector<unsigned char> wrapped_sig_shape_valid_none{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_NONE),
+    };
+    std::vector<unsigned char> pubkey_shape_valid(33, 0x66);
+    pubkey_shape_valid[0] = 0x02;
+
+    codequantum::ResetMLDSA65ExternalBackendVerifierForTesting();
+    BOOST_CHECK(!codequantum::MLDSA65ExternalBackendBridgeReady());
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::UNAVAILABLE));
+
+    const codequantum::MLDSA65NativeBackendBinding binding_before = codequantum::GetDefaultMLDSA65NativeBackendBinding();
+#if defined(ENABLE_MLDSA65_EXTERNAL_BACKEND_SCAFFOLD) && defined(HAVE_MLDSA65_EXTERNAL_BACKEND_HEADER)
+    BOOST_CHECK(binding_before.is_available != nullptr);
+    BOOST_CHECK(binding_before.verify != nullptr);
+    BOOST_CHECK(!binding_before.is_available());
+
+    g_mldsa_external_bridge_calls = 0;
+    g_mldsa_external_request_observer_calls = 0;
+    g_mldsa_external_result_code_to_return = codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_UNAVAILABLE;
+    codequantum::SetMLDSA65ExternalBackendVerifierForTesting(ExternalBridgeVerified);
+    codequantum::SetMLDSA65ExternalBackendRequestObserverForTesting(ObserveExternalRequest);
+    BOOST_CHECK(codequantum::MLDSA65ExternalBackendBridgeReady());
+
+    const codequantum::MLDSA65NativeBackendBinding binding_after = codequantum::GetDefaultMLDSA65NativeBackendBinding();
+    BOOST_CHECK(binding_after.is_available != nullptr);
+    BOOST_CHECK(binding_after.verify != nullptr);
+    BOOST_CHECK(binding_after.is_available());
+
+    const codequantum::MLDSA65BackendAdapterResult result =
+        binding_after.verify(wrapped_sig_shape_valid, pubkey_shape_valid, script_native);
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(result), static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::VERIFIED));
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_external_request_observer_calls, 1);
+    BOOST_CHECK_EQUAL(g_mldsa_external_observed_request_version, codequantum::MLDSA65_EXTERNAL_BACKEND_REQUEST_VERSION);
+    BOOST_CHECK_EQUAL(g_mldsa_external_observed_capability_flags, codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITIES_BASELINE);
+    BOOST_CHECK_EQUAL(g_mldsa_external_observed_capability_profile_id, codequantum::MLDSA65_EXTERNAL_BACKEND_CAPABILITY_PROFILE_BASELINE_V1);
+    BOOST_CHECK(g_mldsa_external_observed_request_magic == codequantum::MLDSA65_EXTERNAL_BACKEND_REQUEST_MAGIC);
+    BOOST_CHECK_EQUAL(g_mldsa_external_observed_request_shape_hash, codequantum::MLDSA65_EXTERNAL_BACKEND_REQUEST_SHAPE_HASH);
+    BOOST_CHECK(g_mldsa_external_observed_interface_id == codequantum::MLDSA65_EXTERNAL_BACKEND_INTERFACE_ID);
+    BOOST_CHECK(g_mldsa_external_observed_wrapped_sig_ptr == &wrapped_sig_shape_valid);
+    BOOST_CHECK(g_mldsa_external_observed_pubkey_ptr == &pubkey_shape_valid);
+    BOOST_CHECK(g_mldsa_external_observed_script_code_ptr == &script_native);
+    BOOST_CHECK_EQUAL(g_mldsa_external_observed_der_sig_size, static_cast<size_t>(8));
+    BOOST_CHECK_EQUAL(g_mldsa_external_observed_pubkey_payload_size, static_cast<size_t>(32));
+    BOOST_CHECK_EQUAL(g_mldsa_external_observed_sighash_type, static_cast<unsigned char>(SIGHASH_ALL));
+    BOOST_CHECK(g_mldsa_external_observed_pubkey_is_compressed);
+    BOOST_CHECK(g_mldsa_external_observed_prehash_domain_tag == codequantum::MLDSA65_EXTERNAL_BACKEND_PREHASH_DOMAIN_TAG);
+    BOOST_CHECK(g_mldsa_external_observed_prehashed_sighash32 ==
+                ComputeExpectedExternalPrehashedSighash(script_native, static_cast<unsigned char>(SIGHASH_ALL)));
+    BOOST_CHECK(g_mldsa_external_observed_request_content_digest32 == g_mldsa_external_observed_request_content_digest32_recomputed);
+
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid_none, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::VERIFIED));
+    BOOST_CHECK(g_mldsa_external_observed_prehashed_sighash32 ==
+                ComputeExpectedExternalPrehashedSighash(script_native, static_cast<unsigned char>(SIGHASH_NONE)));
+
+    codequantum::SetMLDSA65ExternalBackendResultCodeVerifierForTesting(ExternalBridgeResultCodeFromRequest);
+    g_mldsa_external_result_code_to_return = codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_VERIFIED;
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::VERIFIED));
+    g_mldsa_external_result_code_to_return = codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_REJECTED;
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    g_mldsa_external_result_code_to_return = static_cast<uint8_t>(255);
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::UNAVAILABLE));
+    codequantum::ResetMLDSA65ExternalBackendResultCodeVerifierForTesting();
+
+    // Callback order contract: observer runs first, then result-code verifier.
+    g_mldsa_external_callback_trace.clear();
+    g_mldsa_external_result_code_to_return = codequantum::MLDSA65_EXTERNAL_BACKEND_RESULT_CODE_REJECTED;
+    codequantum::SetMLDSA65ExternalBackendVerifierForTesting(ExternalBridgeVerifiedWithTrace);
+    codequantum::SetMLDSA65ExternalBackendRequestObserverForTesting(ObserveExternalRequestWithTrace);
+    codequantum::SetMLDSA65ExternalBackendResultCodeVerifierForTesting(ExternalBridgeResultCodeFromRequestWithTrace);
+    g_mldsa_external_bridge_calls = 0;
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_external_callback_trace, std::string{"OR"});
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 0);
+
+    // Without result-code verifier, observer precedes verifier and fallback is bypassed.
+    g_mldsa_external_callback_trace.clear();
+    codequantum::ResetMLDSA65ExternalBackendResultCodeVerifierForTesting();
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::VERIFIED));
+    BOOST_CHECK_EQUAL(g_mldsa_external_callback_trace, std::string{"OV"});
+
+    // Immutability contract: observer mutation causes digest mismatch -> REJECTED before verifier dispatch.
+    g_mldsa_external_callback_trace.clear();
+    codequantum::SetMLDSA65ExternalBackendVerifierForTesting(ExternalBridgeVerifiedWithTrace);
+    codequantum::SetMLDSA65ExternalBackendRequestObserverForTesting(ObserveExternalRequestMutateDigest);
+    g_mldsa_external_bridge_calls = 0;
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    BOOST_CHECK_EQUAL(g_mldsa_external_callback_trace, std::string{"M"});
+    BOOST_CHECK_EQUAL(g_mldsa_external_bridge_calls, 0);
+
+    // Keep bridge-ready verifier path for subsequent reject-path assertions.
+    codequantum::SetMLDSA65ExternalBackendVerifierForTesting(ExternalBridgeVerified);
+    codequantum::SetMLDSA65ExternalBackendRequestObserverForTesting(ObserveExternalRequest);
+
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(std::vector<unsigned char>{}, pubkey_shape_valid, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, std::vector<unsigned char>{}, script_native)),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, pubkey_shape_valid, CScript())),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+
+    // Error-priority contract for multi-invalid inputs:
+    // parse/structural gates take precedence and all such combinations map to REJECTED.
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(std::vector<unsigned char>{}, std::vector<unsigned char>{}, CScript())),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(std::vector<unsigned char>{}, pubkey_shape_valid, CScript())),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(
+                          codequantum::VerifyMLDSA65ExternalBackendAdapter(wrapped_sig_shape_valid, std::vector<unsigned char>{}, CScript())),
+                      static_cast<unsigned char>(codequantum::MLDSA65BackendAdapterResult::REJECTED));
+#else
+    BOOST_CHECK(binding_before.is_available == nullptr);
+    BOOST_CHECK(binding_before.verify == nullptr);
+#endif
+
+    codequantum::ResetMLDSA65ExternalBackendVerifierForTesting();
+    codequantum::ResetMLDSA65ExternalBackendRequestObserverForTesting();
+    codequantum::ResetMLDSA65ExternalBackendResultCodeVerifierForTesting();
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_mldsa_parser_contract_frozen)
+{
+    const std::vector<unsigned char> wrapped_sig_ok{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    const std::vector<unsigned char> wrapped_sig_alt_hashtype{
+        0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_NONE),
+    };
+    const std::vector<unsigned char> wrapped_sig_bad_tag{
+        0x31, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    const std::vector<unsigned char> wrapped_sig_bad_len{
+        0x30, 0x07, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    std::vector<unsigned char> wrapped_sig_boundary72_low_s{
+        0x30, 0x45, 0x02, 0x21,
+        0x00, 0x80,
+    };
+    wrapped_sig_boundary72_low_s.insert(wrapped_sig_boundary72_low_s.end(), 31, 0x01);
+    wrapped_sig_boundary72_low_s.push_back(0x02);
+    wrapped_sig_boundary72_low_s.push_back(0x20);
+    wrapped_sig_boundary72_low_s.insert(wrapped_sig_boundary72_low_s.end(), {
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
+        0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b,
+        0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x40,
+    });
+    wrapped_sig_boundary72_low_s.push_back(static_cast<unsigned char>(SIGHASH_ALL));
+
+    std::vector<unsigned char> wrapped_sig_bad_len_boundary = wrapped_sig_boundary72_low_s;
+    wrapped_sig_bad_len_boundary[1] = 71;
+
+    std::vector<unsigned char> wrapped_sig_bad_r_tag = wrapped_sig_ok;
+    wrapped_sig_bad_r_tag[2] = 0x03;
+    std::vector<unsigned char> wrapped_sig_bad_s_tag = wrapped_sig_ok;
+    wrapped_sig_bad_s_tag[5] = 0x03;
+    std::vector<unsigned char> wrapped_sig_zero_r_len = wrapped_sig_ok;
+    wrapped_sig_zero_r_len[3] = 0x00;
+    wrapped_sig_zero_r_len[1] = 0x05;
+    std::vector<unsigned char> wrapped_sig_neg_r{
+        0x30, 0x07, 0x02, 0x02, 0x80, 0x01, 0x02, 0x01,
+        0x01, static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    std::vector<unsigned char> wrapped_sig_redundant_r_zero{
+        0x30, 0x07, 0x02, 0x02, 0x00, 0x01, 0x02, 0x01,
+        0x01, static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    std::vector<unsigned char> wrapped_sig_high_s_32{
+        0x30, 0x25, 0x02, 0x01, 0x01, 0x02, 0x20,
+        0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe,
+        0xba, 0xae, 0xdc, 0xe6, 0xaf, 0x48, 0xa0, 0x3b,
+        0xbf, 0xd2, 0x5e, 0x8c, 0xd0, 0x36, 0x41, 0x41,
+        static_cast<unsigned char>(SIGHASH_ALL),
+    };
+    std::vector<unsigned char> wrapped_sig_high_s_33{
+        0x30, 0x26, 0x02, 0x01, 0x01, 0x02, 0x21, 0x00,
+        0x80,
+    };
+    wrapped_sig_high_s_33.insert(wrapped_sig_high_s_33.end(), 31, 0x00);
+    wrapped_sig_high_s_33.push_back(static_cast<unsigned char>(SIGHASH_ALL));
+
+    codequantum::MLDSA65WrappedSigView wrapped_view{};
+    codequantum::MLDSA65WrappedSigParseError wrapped_error = codequantum::MLDSA65WrappedSigParseError::OK;
+
+    BOOST_CHECK(codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_ok));
+    BOOST_CHECK(codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_alt_hashtype));
+    BOOST_CHECK(codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_boundary72_low_s));
+    BOOST_CHECK(codequantum::ParseMLDSA65WrappedSignature(wrapped_sig_ok, &wrapped_view));
+    BOOST_CHECK_EQUAL(wrapped_view.der_sig_offset, 0U);
+    BOOST_CHECK_EQUAL(wrapped_view.der_sig_size, 8U);
+    BOOST_CHECK_EQUAL(wrapped_view.r_offset, 4U);
+    BOOST_CHECK_EQUAL(wrapped_view.r_size, 1U);
+    BOOST_CHECK(wrapped_view.r_is_minimally_encoded);
+    BOOST_CHECK_EQUAL(wrapped_view.s_offset, 7U);
+    BOOST_CHECK_EQUAL(wrapped_view.s_size, 1U);
+    BOOST_CHECK(wrapped_view.s_is_minimally_encoded);
+    BOOST_CHECK(wrapped_view.s_is_low);
+    BOOST_CHECK_EQUAL(wrapped_view.sighash_offset, 8U);
+    BOOST_CHECK_EQUAL(wrapped_view.sighash_type, static_cast<unsigned char>(SIGHASH_ALL));
+    BOOST_CHECK(codequantum::ParseMLDSA65WrappedSignature(wrapped_sig_boundary72_low_s, &wrapped_view));
+    BOOST_CHECK_EQUAL(wrapped_view.der_sig_offset, 0U);
+    BOOST_CHECK_EQUAL(wrapped_view.der_sig_size, 71U);
+    BOOST_CHECK_EQUAL(wrapped_view.r_offset, 4U);
+    BOOST_CHECK_EQUAL(wrapped_view.r_size, 33U);
+    BOOST_CHECK(wrapped_view.r_is_minimally_encoded);
+    BOOST_CHECK_EQUAL(wrapped_view.s_offset, 39U);
+    BOOST_CHECK_EQUAL(wrapped_view.s_size, 32U);
+    BOOST_CHECK(wrapped_view.s_is_minimally_encoded);
+    BOOST_CHECK(wrapped_view.s_is_low);
+    BOOST_CHECK_EQUAL(wrapped_view.sighash_offset, 71U);
+    BOOST_CHECK_EQUAL(wrapped_view.sighash_type, static_cast<unsigned char>(SIGHASH_ALL));
+    BOOST_CHECK(codequantum::ParseMLDSA65WrappedSignature(wrapped_sig_alt_hashtype, &wrapped_view));
+    BOOST_CHECK_EQUAL(wrapped_view.der_sig_offset, 0U);
+    BOOST_CHECK_EQUAL(wrapped_view.der_sig_size, 8U);
+    BOOST_CHECK_EQUAL(wrapped_view.r_offset, 4U);
+    BOOST_CHECK_EQUAL(wrapped_view.r_size, 1U);
+    BOOST_CHECK(wrapped_view.r_is_minimally_encoded);
+    BOOST_CHECK_EQUAL(wrapped_view.s_offset, 7U);
+    BOOST_CHECK_EQUAL(wrapped_view.s_size, 1U);
+    BOOST_CHECK(wrapped_view.s_is_minimally_encoded);
+    BOOST_CHECK(wrapped_view.s_is_low);
+    BOOST_CHECK_EQUAL(wrapped_view.sighash_offset, 8U);
+    BOOST_CHECK_EQUAL(wrapped_view.sighash_type, static_cast<unsigned char>(SIGHASH_NONE));
+    BOOST_CHECK(codequantum::ParseMLDSA65WrappedSignature(wrapped_sig_ok, nullptr));
+    BOOST_CHECK(codequantum::ParseMLDSA65WrappedSignatureDetailed(wrapped_sig_ok, &wrapped_view, &wrapped_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(wrapped_error), static_cast<unsigned char>(codequantum::MLDSA65WrappedSigParseError::OK));
+    BOOST_CHECK(!codequantum::ParseMLDSA65WrappedSignatureDetailed({}, &wrapped_view, &wrapped_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(wrapped_error), static_cast<unsigned char>(codequantum::MLDSA65WrappedSigParseError::EMPTY_OR_OVERSIZE));
+    BOOST_CHECK(!codequantum::ParseMLDSA65WrappedSignatureDetailed(wrapped_sig_bad_tag, &wrapped_view, &wrapped_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(wrapped_error), static_cast<unsigned char>(codequantum::MLDSA65WrappedSigParseError::BAD_SEQUENCE_TAG));
+    BOOST_CHECK(!codequantum::ParseMLDSA65WrappedSignatureDetailed(wrapped_sig_bad_r_tag, &wrapped_view, &wrapped_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(wrapped_error), static_cast<unsigned char>(codequantum::MLDSA65WrappedSigParseError::BAD_R_TAG));
+    BOOST_CHECK(!codequantum::ParseMLDSA65WrappedSignatureDetailed(wrapped_sig_bad_s_tag, &wrapped_view, &wrapped_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(wrapped_error), static_cast<unsigned char>(codequantum::MLDSA65WrappedSigParseError::BAD_S_TAG));
+    BOOST_CHECK(!codequantum::ParseMLDSA65WrappedSignatureDetailed(wrapped_sig_redundant_r_zero, &wrapped_view, &wrapped_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(wrapped_error), static_cast<unsigned char>(codequantum::MLDSA65WrappedSigParseError::NON_MINIMAL_R));
+    BOOST_CHECK(!codequantum::ParseMLDSA65WrappedSignatureDetailed(wrapped_sig_high_s_32, &wrapped_view, &wrapped_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(wrapped_error), static_cast<unsigned char>(codequantum::MLDSA65WrappedSigParseError::HIGH_S));
+    BOOST_CHECK(!codequantum::ParseMLDSA65WrappedSignatureDetailed(std::vector<unsigned char>{0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01, 0x00}, &wrapped_view, &wrapped_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(wrapped_error), static_cast<unsigned char>(codequantum::MLDSA65WrappedSigParseError::ZERO_HASHTYPE));
+
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature({}));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(std::vector<unsigned char>{0x30, 0x00, static_cast<unsigned char>(SIGHASH_ALL)}));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(std::vector<unsigned char>(74, 0x01)));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_bad_tag));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_bad_len));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_bad_len_boundary));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_bad_r_tag));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_bad_s_tag));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_zero_r_len));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_neg_r));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_redundant_r_zero));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_high_s_32));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(wrapped_sig_high_s_33));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65WrappedSignature(std::vector<unsigned char>{0x30, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01, 0x00}));
+
+    std::vector<unsigned char> pubkey_compressed_02(33, 0x00);
+    pubkey_compressed_02[0] = 0x02;
+    std::vector<unsigned char> pubkey_compressed_03(33, 0x00);
+    pubkey_compressed_03[0] = 0x03;
+    std::vector<unsigned char> pubkey_uncompressed_04(65, 0x00);
+    pubkey_uncompressed_04[0] = 0x04;
+
+    codequantum::MLDSA65PubKeyView pubkey_view{};
+    codequantum::MLDSA65PubKeyParseError pubkey_error = codequantum::MLDSA65PubKeyParseError::OK;
+
+    BOOST_CHECK(codequantum::IsStructurallyValidMLDSA65PubKey(pubkey_compressed_02));
+    BOOST_CHECK(codequantum::IsStructurallyValidMLDSA65PubKey(pubkey_compressed_03));
+    BOOST_CHECK(codequantum::IsStructurallyValidMLDSA65PubKey(pubkey_uncompressed_04));
+    BOOST_CHECK(codequantum::ParseMLDSA65PubKey(pubkey_compressed_02, &pubkey_view));
+    BOOST_CHECK(pubkey_view.is_compressed);
+    BOOST_CHECK_EQUAL(pubkey_view.payload_offset, 1U);
+    BOOST_CHECK_EQUAL(pubkey_view.payload_size, 32U);
+    BOOST_CHECK_EQUAL(pubkey_view.prefix, 0x02);
+    BOOST_CHECK(codequantum::ParseMLDSA65PubKey(pubkey_compressed_03, &pubkey_view));
+    BOOST_CHECK(pubkey_view.is_compressed);
+    BOOST_CHECK_EQUAL(pubkey_view.payload_offset, 1U);
+    BOOST_CHECK_EQUAL(pubkey_view.payload_size, 32U);
+    BOOST_CHECK_EQUAL(pubkey_view.prefix, 0x03);
+    BOOST_CHECK(codequantum::ParseMLDSA65PubKey(pubkey_uncompressed_04, &pubkey_view));
+    BOOST_CHECK(!pubkey_view.is_compressed);
+    BOOST_CHECK_EQUAL(pubkey_view.payload_offset, 1U);
+    BOOST_CHECK_EQUAL(pubkey_view.payload_size, 64U);
+    BOOST_CHECK_EQUAL(pubkey_view.prefix, 0x04);
+    BOOST_CHECK(codequantum::ParseMLDSA65PubKey(pubkey_compressed_03, nullptr));
+    BOOST_CHECK(codequantum::ParseMLDSA65PubKeyDetailed(pubkey_compressed_02, &pubkey_view, &pubkey_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(pubkey_error), static_cast<unsigned char>(codequantum::MLDSA65PubKeyParseError::OK));
+    BOOST_CHECK(!codequantum::ParseMLDSA65PubKeyDetailed({}, &pubkey_view, &pubkey_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(pubkey_error), static_cast<unsigned char>(codequantum::MLDSA65PubKeyParseError::EMPTY));
+    BOOST_CHECK(!codequantum::ParseMLDSA65PubKeyDetailed(std::vector<unsigned char>(66, 0x02), &pubkey_view, &pubkey_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(pubkey_error), static_cast<unsigned char>(codequantum::MLDSA65PubKeyParseError::OVERSIZE));
+    BOOST_CHECK(!codequantum::ParseMLDSA65PubKeyDetailed(std::vector<unsigned char>(33, 0x00), &pubkey_view, &pubkey_error));
+    BOOST_CHECK_EQUAL(static_cast<unsigned char>(pubkey_error), static_cast<unsigned char>(codequantum::MLDSA65PubKeyParseError::INVALID_FORMAT));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65PubKey({}));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65PubKey(std::vector<unsigned char>(66, 0x02)));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65PubKey(std::vector<unsigned char>(33, 0x00)));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65PubKey(std::vector<unsigned char>(65, 0x00)));
+    BOOST_CHECK(!codequantum::IsStructurallyValidMLDSA65PubKey(std::vector<unsigned char>(33, 0x04)));
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_budget_boundaries_frozen)
+{
+    const KeyData keys;
+    const CScript script_pub_key = CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG;
+    const CScriptWitness empty_witness;
+    constexpr unsigned int cq_flags = SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_FJARCODE_OPCODES;
+
+    const CTransaction tx_credit{BuildCreditingTransaction(script_pub_key, 0)};
+    CMutableTransaction tx_spend = BuildSpendingTransaction(CScript(), CScriptWitness(), tx_credit);
+    const uint256 legacy_sighash = SignatureHash(script_pub_key, tx_spend, 0, SIGHASH_ALL, 0, SigVersion::BASE);
+
+    std::vector<unsigned char> wrapped_sig73;
+    std::vector<unsigned char> r;
+    std::vector<unsigned char> s;
+    uint32_t iter = 0;
+    do {
+        keys.key1C.Sign(legacy_sighash, wrapped_sig73, false, iter++);
+        if ((33 == 33) != (wrapped_sig73[5 + wrapped_sig73[3]] == 33)) {
+            NegateSignatureS(wrapped_sig73);
+        }
+        r = std::vector<unsigned char>(wrapped_sig73.begin() + 4, wrapped_sig73.begin() + 4 + wrapped_sig73[3]);
+        s = std::vector<unsigned char>(wrapped_sig73.begin() + 6 + wrapped_sig73[3], wrapped_sig73.begin() + 6 + wrapped_sig73[3] + wrapped_sig73[5 + wrapped_sig73[3]]);
+    } while (r.size() != 33 || s.size() != 33);
+    wrapped_sig73.push_back(SIGHASH_ALL);
+
+    const auto make_envelope = [](uint8_t mode, uint8_t algorithm, const std::vector<unsigned char>& wrapped_sig) {
+        std::vector<unsigned char> envelope;
+        envelope.reserve(6 + wrapped_sig.size());
+        envelope.push_back('C');
+        envelope.push_back('Q');
+        envelope.push_back(1);
+        envelope.push_back(mode);
+        envelope.push_back(algorithm);
+        envelope.push_back(static_cast<unsigned char>(wrapped_sig.size()));
+        envelope.insert(envelope.end(), wrapped_sig.begin(), wrapped_sig.end());
+        return envelope;
+    };
+
+    BOOST_REQUIRE_EQUAL(wrapped_sig73.size(), 73U);
+    const std::vector<unsigned char> envelope_max_budget = make_envelope(/*mode=*/0, /*algorithm=*/0, wrapped_sig73);
+    BOOST_REQUIRE_EQUAL(envelope_max_budget.size(), 79U);
+
+    DoTest(script_pub_key,
+        CScript() << envelope_max_budget,
+        empty_witness,
+        cq_flags,
+        "Code Quantum envelope max wrapped signature and total size accepted",
+        SCRIPT_ERR_OK);
+
+    std::vector<unsigned char> wrapped_sig74 = wrapped_sig73;
+    wrapped_sig74.push_back(0x00);
+    BOOST_REQUIRE_EQUAL(wrapped_sig74.size(), 74U);
+
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/0, wrapped_sig74),
+        empty_witness,
+        cq_flags,
+        "Code Quantum envelope wrapped signature size over budget rejected",
+        SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_pubkey_and_stack_budget_frozen)
+{
+    const KeyData keys;
+    const CScriptWitness empty_witness;
+    constexpr unsigned int cq_flags = SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_FJARCODE_OPCODES;
+
+    const CScript normal_script_pub_key = CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG;
+    const CTransaction tx_credit{BuildCreditingTransaction(normal_script_pub_key, 0)};
+    CMutableTransaction tx_spend = BuildSpendingTransaction(CScript(), CScriptWitness(), tx_credit);
+    const uint256 legacy_sighash = SignatureHash(normal_script_pub_key, tx_spend, 0, SIGHASH_ALL, 0, SigVersion::BASE);
+
+    std::vector<unsigned char> wrapped_sig;
+    keys.key1C.Sign(legacy_sighash, wrapped_sig);
+    wrapped_sig.push_back(SIGHASH_ALL);
+
+    const auto make_envelope = [](uint8_t mode, uint8_t algorithm, const std::vector<unsigned char>& payload) {
+        std::vector<unsigned char> envelope;
+        envelope.reserve(6 + payload.size());
+        envelope.push_back('C');
+        envelope.push_back('Q');
+        envelope.push_back(1);
+        envelope.push_back(mode);
+        envelope.push_back(algorithm);
+        envelope.push_back(static_cast<unsigned char>(payload.size()));
+        envelope.insert(envelope.end(), payload.begin(), payload.end());
+        return envelope;
+    };
+
+    // Pubkey-size budget: valid CQ signature envelope + oversized pubkey push must fail.
+    std::vector<unsigned char> oversized_pubkey(66, 0x02);
+    const CScript oversized_pubkey_script = CScript() << oversized_pubkey << OP_CHECKSIG;
+    DoTest(oversized_pubkey_script,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/0, wrapped_sig),
+        empty_witness,
+        cq_flags,
+        "Code Quantum oversized pubkey rejected by budget",
+        SCRIPT_ERR_PUBKEYTYPE);
+
+    // Stack-push-total budget: 79-byte envelope + 66-byte pubkey exceeds limit.
+    std::vector<unsigned char> max_envelope_payload(73, 0x00);
+    const std::vector<unsigned char> max_envelope = make_envelope(/*mode=*/0, /*algorithm=*/0, max_envelope_payload);
+    BOOST_REQUIRE_EQUAL(max_envelope.size(), 79U);
+    DoTest(oversized_pubkey_script,
+        CScript() << max_envelope,
+        empty_witness,
+        cq_flags,
+        "Code Quantum stack push total budget enforced",
+        SCRIPT_ERR_PUSH_SIZE);
+
+    // Verify-cost budget: 73-byte wrapped signature + 65-byte uncompressed pubkey exceeds 106.
+    const CScript uncompressed_pubkey_script = CScript() << ToByteVector(keys.pubkey1) << OP_CHECKSIG;
+    DoTest(uncompressed_pubkey_script,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/0, wrapped_sig),
+        empty_witness,
+        cq_flags,
+        "Code Quantum verify cost budget enforced",
+        SCRIPT_ERR_OP_COUNT);
+}
+
+BOOST_AUTO_TEST_CASE(code_quantum_reject_precedence_frozen)
+{
+    const KeyData keys;
+    const CScript script_pub_key = CScript() << ToByteVector(keys.pubkey1C) << OP_CHECKSIG;
+    const CScriptWitness empty_witness;
+    constexpr unsigned int cq_flags = SCRIPT_VERIFY_STRICTENC | SCRIPT_ENABLE_FJARCODE_OPCODES;
+
+    const auto make_envelope = [](uint8_t mode, uint8_t algorithm, const std::vector<unsigned char>& wrapped_sig) {
+        std::vector<unsigned char> envelope;
+        envelope.reserve(6 + wrapped_sig.size());
+        envelope.push_back('C');
+        envelope.push_back('Q');
+        envelope.push_back(1);
+        envelope.push_back(mode);
+        envelope.push_back(algorithm);
+        envelope.push_back(static_cast<unsigned char>(wrapped_sig.size()));
+        envelope.insert(envelope.end(), wrapped_sig.begin(), wrapped_sig.end());
+        return envelope;
+    };
+
+    // Decode failures must win over later mode/algo/missing-sig checks.
+    DoTest(script_pub_key,
+        CScript() << ParseHex("435101ff0001"),
+        empty_witness,
+        cq_flags,
+        "Code Quantum reject precedence decode before mode",
+        SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
+
+    // Unsupported mode must win over missing-required-signature.
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/255, /*algorithm=*/0, /*wrapped_sig=*/{}),
+        empty_witness,
+        cq_flags,
+        "Code Quantum reject precedence mode before missing-signature",
+        SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_MODE);
+
+    // Unsupported algorithm must win over missing-required-signature.
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/3, /*wrapped_sig=*/{}),
+        empty_witness,
+        cq_flags,
+        "Code Quantum reject precedence algorithm before missing-signature",
+        SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_ALGORITHM_ID);
+
+    // Missing-required-signature must win before wrapped-signature DER checks.
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/0, /*wrapped_sig=*/{}),
+        empty_witness,
+        cq_flags,
+        "Code Quantum reject precedence missing-signature before DER validation",
+        SCRIPT_ERR_CODE_QUANTUM_MISSING_REQUIRED_SIG);
+
+    // Wrapped-signature DER noncanonicality must win before hashtype/policy checks.
+    DoTest(script_pub_key,
+        CScript() << make_envelope(/*mode=*/0, /*algorithm=*/0, std::vector<unsigned char>{0x01}),
+        empty_witness,
+        cq_flags,
+        "Code Quantum reject precedence DER validation before hashtype",
+        SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING);
 }
 
 BOOST_AUTO_TEST_CASE(bip341_keypath_test_vectors)

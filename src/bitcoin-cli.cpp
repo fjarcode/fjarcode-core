@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -816,7 +817,17 @@ static UniValue CallRPC(BaseRequestHandler* rh, const std::string& strMethod, co
 
         if (std::optional<std::string> rpcport_arg = gArgs.GetArg("-rpcport")) {
             // -rpcport was specified
-            const uint16_t rpcport_int{ToIntegral<uint16_t>(rpcport_arg.value()).value_or(0)};
+            uint16_t rpcport_int{0};
+            const std::string& rpcport_value = rpcport_arg.value();
+            try {
+                size_t consumed{0};
+                const unsigned long parsed = std::stoul(rpcport_value, &consumed, 10);
+                if (consumed == rpcport_value.size() && parsed > 0 && parsed <= std::numeric_limits<uint16_t>::max()) {
+                    rpcport_int = static_cast<uint16_t>(parsed);
+                }
+            } catch (const std::exception&) {
+                rpcport_int = 0;
+            }
             if (rpcport_int == 0) {
                 // Uses argument provided as-is
                 // (rather than value parsed)

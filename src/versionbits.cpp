@@ -265,6 +265,7 @@ bool VersionBitsCache::IsActiveAfter(const CBlockIndex* pindexPrev, const Consen
 static int32_t ComputeBlockVersion(const CBlockIndex* pindexPrev, const Consensus::Params& params, std::array<ThresholdConditionCache, Consensus::MAX_VERSION_BITS_DEPLOYMENTS>& caches)
 {
     int32_t nVersion = VERSIONBITS_TOP_BITS;
+    const int nHeight = pindexPrev == nullptr ? 0 : pindexPrev->nHeight + 1;
 
     for (int i = 0; i < (int)Consensus::MAX_VERSION_BITS_DEPLOYMENTS; i++) {
         Consensus::DeploymentPos pos = static_cast<Consensus::DeploymentPos>(i);
@@ -273,6 +274,12 @@ static int32_t ComputeBlockVersion(const CBlockIndex* pindexPrev, const Consensu
         if (state == ThresholdState::LOCKED_IN || state == ThresholdState::STARTED) {
             nVersion |= checker.Mask();
         }
+    }
+
+    if (nHeight >= params.SHA3Height) {
+        nVersion |= params.SHA3VersionBit;
+    } else {
+        nVersion &= ~params.SHA3VersionBit;
     }
 
     return nVersion;

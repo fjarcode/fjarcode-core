@@ -42,6 +42,7 @@
 #include <primitives/transaction.h>
 #include <random.h>
 #include <script/script.h>
+#include <script/script_flags.h>
 #include <script/sigcache.h>
 #include <signet.h>
 #include <tinyformat.h>
@@ -1251,7 +1252,12 @@ bool MemPoolAccept::PolicyScriptChecks(const ATMPArgs& args, Workspace& ws)
     const CTransaction& tx = *ws.m_ptx;
     TxValidationState& state = ws.m_state;
 
-    constexpr unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
+    unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
+    const unsigned int current_block_flags{
+        GetBlockScriptFlags(*m_active_chainstate.m_chain.Tip(), m_active_chainstate.m_chainman)};
+    // Keep mempool policy in lockstep with active compat consensus script bits
+    // so Code Quantum envelopes do not fail policy while succeeding in blocks.
+    scriptVerifyFlags |= (current_block_flags & SCRIPT_COMPAT_USED_FLAGS);
 
     // Check input scripts and signatures.
     // This is done last to help prevent CPU exhaustion denial-of-service attacks.
@@ -2334,6 +2340,44 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const Ch
 {
     const Consensus::Params& consensusparams = chainman.GetConsensus();
 
+    if (consensusparams.FJARCODEActivationHeight != Consensus::NEVER_ACTIVE_HEIGHT &&
+        block_index.nHeight >= consensusparams.FJARCODEActivationHeight) {
+        // FJAR post-fork mandatory rules in base script validation.
+        uint32_t flags{SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS};
+        flags |= SCRIPT_VERIFY_DERSIG;
+        flags |= SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY;
+        flags |= SCRIPT_VERIFY_CHECKSEQUENCEVERIFY;
+        flags |= SCRIPT_VERIFY_NULLDUMMY;
+        flags |= SCRIPT_VERIFY_NULLFAIL;
+        flags |= SCRIPT_VERIFY_LOW_S;
+        flags |= SCRIPT_VERIFY_MINIMALDATA;
+        flags |= SCRIPT_VERIFY_SIGPUSHONLY;
+        flags |= SCRIPT_VERIFY_CLEANSTACK;
+        flags |= SCRIPT_ENABLE_SIGHASH_FORKID;
+
+        if (consensusparams.magneticAnomalyHeight != Consensus::NEVER_ACTIVE_HEIGHT &&
+            block_index.nHeight >= consensusparams.magneticAnomalyHeight) {
+            flags |= SCRIPT_ENABLE_FJARCODE_OPCODES;
+        }
+
+        if (consensusparams.upgrade9Height != Consensus::NEVER_ACTIVE_HEIGHT &&
+            block_index.nHeight >= consensusparams.upgrade9Height) {
+            flags |= SCRIPT_ENABLE_TOKENS;
+        }
+
+        if (consensusparams.upgrade10Height != Consensus::NEVER_ACTIVE_HEIGHT &&
+            block_index.nHeight >= consensusparams.upgrade10Height) {
+            flags |= SCRIPT_ENABLE_VM_LIMITS;
+        }
+
+        if (consensusparams.upgrade11Height != Consensus::NEVER_ACTIVE_HEIGHT &&
+            block_index.nHeight >= consensusparams.upgrade11Height) {
+            flags |= SCRIPT_ENABLE_MAY2025;
+        }
+
+        return flags;
+    }
+
     // BIP16 didn't become active until Apr 1 2012 (on mainnet, and
     // retroactively applied to testnet)
     // However, only one historical block violated the P2SH rules (on both
@@ -2587,6 +2631,21 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     int nInputs = 0;
     int64_t nSigOpsCost = 0;
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
+
+    // Under CTOR ordering, transactions are not required to be topologically
+    // sorted. Add all outputs first so child transactions can resolve parent
+    // outputs that appear later in the block.
+    const bool fCTOR = pindex->nHeight >= params.GetConsensus().magneticAnomalyHeight;
+    if (fCTOR) {
+        try {
+            for (const auto& ptx : block.vtx) {
+                AddCoins(view, *ptx, pindex->nHeight);
+            }
+        } catch (const std::logic_error&) {
+            state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "tx-duplicate", "ConnectBlock(): tried to overwrite transaction");
+        }
+    }
+
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
         if (!state.IsValid()) break;
@@ -2659,11 +2718,25 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             }
         }
 
-        CTxUndo undoDummy;
-        if (i > 0) {
-            blockundo.vtxundo.emplace_back();
+        if (fCTOR) {
+            // Outputs were added in the pre-pass; only spend inputs here.
+            if (!tx.IsCoinBase()) {
+                blockundo.vtxundo.emplace_back();
+                CTxUndo& txundo = blockundo.vtxundo.back();
+                txundo.vprevout.reserve(tx.vin.size());
+                for (const CTxIn& txin : tx.vin) {
+                    txundo.vprevout.emplace_back();
+                    bool is_spent = view.SpendCoin(txin.prevout, &txundo.vprevout.back());
+                    assert(is_spent);
+                }
+            }
+        } else {
+            CTxUndo undoDummy;
+            if (i > 0) {
+                blockundo.vtxundo.emplace_back();
+            }
+            UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight);
         }
-        UpdateCoins(tx, view, i == 0 ? undoDummy : blockundo.vtxundo.back(), pindex->nHeight);
     }
     const auto time_3{SteadyClock::now()};
     m_chainman.time_connect += time_3 - time_2;
@@ -4215,6 +4288,13 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
         (block.nVersion < 4 && DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_CLTV))) {
             return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, strprintf("bad-version(0x%08x)", block.nVersion),
                                  strprintf("rejected nVersion=0x%08x block", block.nVersion));
+    }
+
+    if (nHeight >= consensusParams.SHA3Height && (block.nVersion & consensusParams.SHA3VersionBit) == 0) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-version-bits", "sha3 version bit not set");
+    }
+    if (nHeight < consensusParams.SHA3Height && (block.nVersion & consensusParams.SHA3VersionBit) != 0) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-version-bits", "sha3 version bit set before activation");
     }
 
     return true;

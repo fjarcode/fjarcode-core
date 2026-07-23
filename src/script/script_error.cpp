@@ -115,6 +115,16 @@ std::string ScriptErrorString(const ScriptError serror)
             return "Using OP_CODESEPARATOR in non-witness script";
         case SCRIPT_ERR_SIG_FINDANDDELETE:
             return "Signature is found in scriptCode";
+        case SCRIPT_ERR_CODE_QUANTUM_NONCANONICAL_ENCODING:
+            return "Code Quantum envelope uses non-canonical encoding";
+        case SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_MODE:
+            return "Code Quantum envelope mode is unsupported";
+        case SCRIPT_ERR_CODE_QUANTUM_UNSUPPORTED_ALGORITHM_ID:
+            return "Code Quantum envelope algorithm id is unsupported";
+        case SCRIPT_ERR_CODE_QUANTUM_MISSING_REQUIRED_SIG:
+            return "Code Quantum envelope is missing required signature payload";
+        case SCRIPT_ERR_CODE_QUANTUM_ACTIVATION_STATE:
+            return "Code Quantum envelope used before native activation state";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;

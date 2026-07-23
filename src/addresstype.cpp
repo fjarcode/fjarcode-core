@@ -69,6 +69,12 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         addressRet = ScriptHash(uint160(vSolutions[0]));
         return true;
     }
+    case TxoutType::SCRIPTHASH32: {
+        QuantumHash hash;
+        std::copy(vSolutions[0].begin(), vSolutions[0].end(), hash.begin());
+        addressRet = hash;
+        return true;
+    }
     case TxoutType::WITNESS_V0_KEYHASH: {
         WitnessV0KeyHash hash;
         std::copy(vSolutions[0].begin(), vSolutions[0].end(), hash.begin());
@@ -128,6 +134,11 @@ public:
         return CScript() << OP_HASH160 << ToByteVector(scriptID) << OP_EQUAL;
     }
 
+    CScript operator()(const QuantumHash& id) const
+    {
+        return CScript() << OP_HASH256 << ToByteVector(id) << OP_EQUAL;
+    }
+
     CScript operator()(const WitnessV0KeyHash& id) const
     {
         return CScript() << OP_0 << ToByteVector(id);
@@ -160,6 +171,7 @@ public:
     bool operator()(const WitnessV0ScriptHash& dest) const { return true; }
     bool operator()(const WitnessV1Taproot& dest) const { return true; }
     bool operator()(const WitnessUnknown& dest) const { return true; }
+    bool operator()(const QuantumHash& dest) const { return true; }
 };
 } // namespace
 
@@ -170,4 +182,12 @@ CScript GetScriptForDestination(const CTxDestination& dest)
 
 bool IsValidDestination(const CTxDestination& dest) {
     return std::visit(ValidDestinationVisitor(), dest);
+}
+
+bool IsWitnessDestination(const CTxDestination& dest)
+{
+    return std::holds_alternative<WitnessV0KeyHash>(dest) ||
+           std::holds_alternative<WitnessV0ScriptHash>(dest) ||
+           std::holds_alternative<WitnessV1Taproot>(dest) ||
+           std::holds_alternative<WitnessUnknown>(dest);
 }
