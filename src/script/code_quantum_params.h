@@ -34,14 +34,14 @@ inline constexpr std::array<uint8_t, 3> MODE_V1_KNOWN_ALGORITHMS{
     ALGORITHM_V1_ML_DSA_65,
 };
 
-inline constexpr std::array<uint8_t, 3> MODE_V1_ACTIVE_ALGORITHMS{
+inline constexpr std::array<uint8_t, 2> MODE_V1_ACTIVE_ALGORITHMS{
     ALGORITHM_V1_WRAPPED_ECDSA_DER,
     ALGORITHM_V1_SHA3_256T,
-    ALGORITHM_V1_ML_DSA_65,
 };
 
-// Hard-fork branch policy: ML-DSA-65 is active at runtime.
-inline constexpr bool ML_DSA_65_RUNTIME_ENABLED{true};
+// Emergency safety gate: keep ML-DSA-65 reserved but inactive until
+// deterministic backend behavior is guaranteed across all node builds.
+inline constexpr bool ML_DSA_65_RUNTIME_ENABLED{false};
 
 } // namespace codequantum
 
