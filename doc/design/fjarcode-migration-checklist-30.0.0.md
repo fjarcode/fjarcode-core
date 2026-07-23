@@ -87,8 +87,8 @@ Use this list as the single source of truth for completion tracking. Keep each i
 - [x] Code Quantum SHA3-256t signature-algorithm path active and covered by unit + functional contract tests.
 - [x] 1-minute block-time policy parity fully ported (consensus parameters + validation behavior + tests).
 - [x] SHA3 PoW policy parity fully ported (`SHA3Height`, `nPowTargetSpacingSHA3`, version-bit behavior, tests).
-- [x] Hard-fork height contract pinned to intended FJAR policy (mainnet anchor set to `118000`, exposed in RPC + covered by contracts).
-- [x] Checkpoint/finalization policy pinned to intended FJAR policy (mainnet anchor set to `117800`, exposed in RPC + covered by contracts).
+- [x] Hard-fork height contract pinned to intended FJAR policy (mainnet anchor set to `108500`, exposed in RPC + covered by contracts).
+- [x] Checkpoint/finalization policy pinned to intended FJAR policy (mainnet anchor set to `108300`, exposed in RPC + covered by contracts).
 - [x] Consensus deployment heights and activation matrix fully matched to intended FJAR mainnet/testnet/signet/regtest policy.
 - [x] Block 0 / genesis parity completed (hash, merkle root, timestamp/nonce/bits/version, and chain-specific assertions).
 - [x] Quantum destination/script plumbing present in v30 migration (`QuantumHash`/`SCRIPTHASH32` path and RPC exposure).
@@ -301,7 +301,7 @@ Run after each phase:
 	`cmake --build build-linux-qt-phase1 -j4 --target fjarcode-qt`.
 	Mark final black/red parity complete only after Linux+Win64 validation evidence is recorded.
 - 2026-07-18 (Phase 6 hardfork/checkpoint policy anchor gate): added explicit policy anchor fields in `Consensus::Params` (`fjarPolicyHardForkHeight`, `fjarPolicyCheckpointHeight`) and wired chainparams values.
-	Mainnet anchors are now pinned to `118000` (hard-fork) and `117800` (checkpoint/finalization); non-main chains keep `NEVER_ACTIVE_HEIGHT` until explicitly configured.
+	Mainnet anchors are now pinned to `108500` (hard-fork) and `108300` (checkpoint/finalization); non-main chains keep `NEVER_ACTIVE_HEIGHT` until explicitly configured.
 	Extended `getcodequantuminfo` policy reporting in `src/rpc/node.cpp` with `hard_fork_height` and `checkpoint_height`, and updated functional contracts in
 	`test/functional/rpc_code_quantum_info.py`,
 	`test/functional/rpc_code_quantum_info_help_contract.py`, and

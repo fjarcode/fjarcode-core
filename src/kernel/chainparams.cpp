@@ -104,8 +104,8 @@ public:
         consensus.nPowTargetSpacingSHA3 = 60;
         consensus.nDefaultConsensusBlockSize = 32000000;
         consensus.maxReorgDepth = 10;
-        consensus.fjarPolicyHardForkHeight = 118000;
-        consensus.fjarPolicyCheckpointHeight = 117800;
+        consensus.fjarPolicyHardForkHeight = 108500;
+        consensus.fjarPolicyCheckpointHeight = 108300;
         consensus.FJARCODEActivationHeight = Consensus::ALWAYS_ACTIVE_HEIGHT;
         consensus.uahfHeight = Consensus::ALWAYS_ACTIVE_HEIGHT;
         consensus.daaHeight = Consensus::ALWAYS_ACTIVE_HEIGHT;
@@ -218,8 +218,8 @@ public:
         consensus.nPowTargetSpacingSHA3 = 60;
         consensus.nDefaultConsensusBlockSize = 32000000;
         consensus.maxReorgDepth = 10;
-        consensus.fjarPolicyHardForkHeight = 118000;
-        consensus.fjarPolicyCheckpointHeight = 117800;
+        consensus.fjarPolicyHardForkHeight = 108500;
+        consensus.fjarPolicyCheckpointHeight = 108300;
         consensus.FJARCODEActivationHeight = Consensus::ALWAYS_ACTIVE_HEIGHT;
         consensus.uahfHeight = Consensus::ALWAYS_ACTIVE_HEIGHT;
         consensus.daaHeight = Consensus::ALWAYS_ACTIVE_HEIGHT;

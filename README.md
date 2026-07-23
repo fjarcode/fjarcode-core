@@ -226,8 +226,8 @@ maxmempool=300
 
 | Network | SHA3 Height | SHA3 Target Spacing | Policy Hard Fork Height | Policy Checkpoint Height |
 |---------|-------------|---------------------|--------------------------|--------------------------|
-| Mainnet | 21000 | 60 seconds | 118000 | 117800 |
-| Testnet | 21000 | 60 seconds | 118000 | 117800 |
+| Mainnet | 21000 | 60 seconds | 108500 | 108300 |
+| Testnet | 21000 | 60 seconds | 108500 | 108300 |
 | Testnet4 | 1 | 60 seconds | 0 | 0 |
 | Signet | 21000 | 60 seconds | never active | never active |
 | Regtest | 1 | 60 seconds | 0 | 0 |
@@ -361,7 +361,7 @@ fjarcode-cli signrawtransactionwithwallet "<rawhex>"
 ## Hard Fork Policy Notes
 
 - FJAR consensus rules are active from genesis.
-- Mainnet/Testnet policy rollout targets remain 118000/117800.
+- Mainnet/Testnet policy rollout targets remain 108500/108300.
 - Testnet4 and Regtest policy heights are fixed at 0 for immediate post-hardfork policy behavior.
 - After SHA3 activation on a network, block headers must carry the SHA3 version bit.
 

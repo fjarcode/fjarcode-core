@@ -146,8 +146,8 @@ class RpcCodeQuantumInfoTest(BitcoinTestFramework):
             assert_equal(info["policy"]["sha3_height"], 21000)
 
         if chain == "main":
-            assert_equal(info["policy"]["hard_fork_height"], 118000)
-            assert_equal(info["policy"]["checkpoint_height"], 117800)
+            assert_equal(info["policy"]["hard_fork_height"], 108500)
+            assert_equal(info["policy"]["checkpoint_height"], 108300)
         elif chain == "regtest":
             assert_equal(info["policy"]["hard_fork_height"], 0)
             assert_equal(info["policy"]["checkpoint_height"], 0)

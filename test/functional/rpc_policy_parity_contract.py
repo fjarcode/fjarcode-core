@@ -171,13 +171,13 @@ class PolicyParityContractTest(BitcoinTestFramework):
                 )
                 self.assert_match(
                     block,
-                    r"consensus\.fjarPolicyHardForkHeight\s*=\s*118000\s*;",
-                    "main: expected FJAR hard-fork anchor height to remain 118000",
+                    r"consensus\.fjarPolicyHardForkHeight\s*=\s*108500\s*;",
+                    "main: expected FJAR hard-fork anchor height to remain 108500",
                 )
                 self.assert_match(
                     block,
-                    r"consensus\.fjarPolicyCheckpointHeight\s*=\s*117800\s*;",
-                    "main: expected FJAR checkpoint/finalization anchor height to remain 117800",
+                    r"consensus\.fjarPolicyCheckpointHeight\s*=\s*108300\s*;",
+                    "main: expected FJAR checkpoint/finalization anchor height to remain 108300",
                 )
                 self.assert_match(
                     block,

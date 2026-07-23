@@ -76,7 +76,7 @@ This checklist tracks migration from staged ML-DSA contracts to native hard-fork
 - [x] Added explicit provider-register vs implementation-override precedence contract in native provider path (registered binding wins while initialized; clear re-enables implementation override on next lazy-init) with frozen coverage.
 - [x] Added cleanup/no-leakage reset-sequence contract in native provider path (explicit reset of default-factory, implementation override, and binding returns provider to disabled baseline without counter/state leakage) with frozen coverage.
 - [x] Added register last-writer contract in native provider path (consecutive `RegisterMLDSA65NativeBackendBinding` updates deterministically use the most recent binding; clear returns dispatch control to lazy-init implementation override) with frozen coverage.
-- [x] Aligned hard-fork policy height rollout per network contract: mainnet/testnet use hard-fork=118000 and checkpoint=117800; regtest/testnet4 run post-hardfork policy from height 0.
+- [x] Aligned hard-fork policy height rollout per network contract: mainnet/testnet use hard-fork=108500 and checkpoint=108300; regtest/testnet4 run post-hardfork policy from height 0.
 
 ## In Progress
 
