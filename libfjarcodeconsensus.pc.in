@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: libfjarcodeconsensus
+Description: FJARCODE consensus verification C API
+Version: @CLIENT_VERSION_STRING@
+Libs: -L${libdir} -lbitcoin_consensus
+Cflags: -I${includedir}
