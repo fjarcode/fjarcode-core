@@ -106,7 +106,7 @@ On macOS hosts with Apple toolchains and Qt available, app outputs are generated
 
 ---
 
-## Hosted Artifacts (v30.0.0)
+## Hosted Artifacts (v30.0.3)
 
 Download path:
 
@@ -114,19 +114,28 @@ Download path:
 
 Windows:
 
-- `fjarcode-qt-v30.0.0-win64.exe`
-- `fjarcode-qt-v30.0.0-win64.zip`
+- `fjarcode-v30.0.3-win64.exe`
+- `fjarcoded-v30.0.3-win64.exe`
+- `fjarcode-cli-v30.0.3-win64.exe`
+- `fjarcode-qt-v30.0.3-win64.exe`
+- `fjarcode-qt-v30.0.3-win64.zip`
+- `fjarcode-v30.0.3-windows-win64-artifacts.zip`
 
 Linux:
 
-- `fjarcode-v30.0.0-linux-x86_64`
-- `fjarcoded-v30.0.0-linux-x86_64`
-- `fjarcode-cli-v30.0.0-linux-x86_64`
-- `fjarcode-tx-v30.0.0-linux-x86_64`
-- `fjarcode-wallet-v30.0.0-linux-x86_64`
-- `fjarcode-util-v30.0.0-linux-x86_64`
-- `fjarcode-qt-v30.0.0-linux-x86_64`
-- `fjarcode-v30.0.0-linux-x86_64-artifacts.tar.gz`
+- `fjarcode-v30.0.3-linux-x86_64`
+- `fjarcoded-v30.0.3-linux-x86_64`
+- `fjarcode-cli-v30.0.3-linux-x86_64`
+- `fjarcode-qt-v30.0.3-linux-x86_64`
+- `fjarcode-v30.0.3-linux-x86_64-artifacts.tar.gz`
+
+Debian:
+
+- `fjarcode-qt-v30.0.3-linux-amd64.deb`
+
+Source:
+
+- `fjarcode-core-source-v30.0.3-20260723-r1-fullsrc.tar.gz`
 
 Checksums:
 
@@ -315,13 +324,13 @@ Look at `capabilities`:
 fjarcode-cli getnewquantumaddress "cq-receive"
 ```
 
-3. Enable wallet quantum signing explicitly when signing spends:
+3. Wallet quantum signing is enabled by default in this release.
 
 ```bash
-fjarcoded -enablecodequantumsigning=1
+fjarcoded -enablecodequantumsigning=0
 ```
 
-The feature gate is intentionally default-off.
+Use `-enablecodequantumsigning=0` only if you need to force a verify-only operational posture.
 
 4. Sign via wallet RPC as usual:
 
@@ -332,7 +341,7 @@ fjarcode-cli signrawtransactionwithwallet "<rawhex>"
 ### Current Capability State (v30 Hard-Fork Branch)
 
 - Verify path: active and available for Code Quantum wrapped flows (including ML-DSA-65 algorithm routing under current native/builtin profile).
-- Signing path: feature-gated and default-off at wallet/runtime level (`-enablecodequantumsigning=0` by default).
+- Signing path: available and default-on at wallet/runtime level (`-enablecodequantumsigning=1` by default).
 - Effective state model exposed by `getcodequantuminfo.capabilities.code_quantum_signing_state`:
 	- `disabled`: wallet signing gate is off.
 	- `verify_only`: wallet signing gate is on but native signer is unavailable in current runtime.
@@ -341,8 +350,8 @@ fjarcode-cli signrawtransactionwithwallet "<rawhex>"
 ### Expected CLI Failure Modes
 
 - `Code Quantum input signing is disabled (-enablecodequantumsigning=1 to enable)`
-	- Cause: wallet feature gate is off.
-	- Action: restart daemon/wallet process with `-enablecodequantumsigning=1`.
+	- Cause: wallet feature gate was explicitly disabled with `-enablecodequantumsigning=0`.
+	- Action: remove the override or restart daemon/wallet process with `-enablecodequantumsigning=1`.
 
 - `Code Quantum signer backend unavailable (runtime is verify-only)`
 	- Cause: wallet gate is on, but native signer is not available in current runtime/build profile.
