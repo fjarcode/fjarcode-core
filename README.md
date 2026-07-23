@@ -41,7 +41,7 @@ FJARCODE also includes the Code Quantum address/runtime path, including ML-DSA-6
 | PoW Algorithms | SHA-256d and SHA3-256t (activation-height controlled) |
 | Address Format | CashAddr (fjarcode:q...) |
 | Code Quantum | CashAddr quantum type and runtime/provider integration |
-| ML-DSA-65 | Native provider pathway and contract-tested dispatch flow (NIST FIPS 204 aligned) |
+| ML-DSA-65 | Active in the runtime algorithm set; native provider pathway and contract-tested dispatch flow (NIST FIPS 204 aligned) |
 | SegWit | Disabled |
 | Coin Symbol | FJAR |
 
@@ -243,6 +243,7 @@ Notes:
 
 - Code Quantum addresses are available via the quantum CashAddr destination type in wallet and RPC flows.
 - In this update, Code Quantum is the default address type returned by `getnewaddress`.
+- ML-DSA-65 is active in the runtime active algorithm set in the current release.
 - The native provider runtime path for ML-DSA-65 is integrated through backend/provider interfaces with deterministic fallback behavior.
 - The ML-DSA integration targets the NIST standard track defined in FIPS 204.
 - Contract tests freeze callback order, provider registration precedence, and cleanup/reset semantics to protect integration behavior across releases.
