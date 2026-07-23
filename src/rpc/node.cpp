@@ -517,7 +517,7 @@ static RPCHelpMan getcodequantuminfo()
     result.pushKV("active_algorithms", std::move(active_algorithms));
 
     UniValue capabilities(UniValue::VOBJ);
-    constexpr bool default_enable_code_quantum_signing{false};
+    constexpr bool default_enable_code_quantum_signing{true};
     const bool wallet_code_quantum_signing_enabled = gArgs.GetBoolArg("-enablecodequantumsigning", default_enable_code_quantum_signing);
     const bool mldsa_65_native_verify_available = codequantum::MLDSA65NativeBackendAvailable();
     const bool mldsa_65_native_signing_available = codequantum::MLDSA65NativeBackendSigningAvailable();

@@ -6,6 +6,7 @@
 #include <script/code_quantum_mldsa.h>
 
 #include <crypto/sha256.h>
+#include <key.h>
 #include <pubkey.h>
 #include <uint256.h>
 
@@ -107,11 +108,42 @@ MLDSA65BackendAdapterResult VerifyMLDSA65ExternalBackendViaApi(const MLDSA65Exte
 #endif
 }
 
-#if defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_VERIFY)
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_VERIFY) || defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_SIGN)
 bool BuiltinSecp256k1BackendAvailable()
 {
     return true;
 }
+
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_SIGN)
+MLDSA65NativeBackendSignResult SignMLDSA65BuiltinSecp256k1Backend(const std::vector<unsigned char>& key_material,
+                                                                   const std::array<unsigned char, 32>& prehashed_sighash32,
+                                                                   unsigned char sighash_type,
+                                                                   std::vector<unsigned char>& out_wrapped_sig)
+{
+    out_wrapped_sig.clear();
+    if (key_material.size() != 32 || sighash_type == 0x00) {
+        return MLDSA65NativeBackendSignResult::REJECTED;
+    }
+
+    CKey key;
+    key.Set(key_material.begin(), key_material.end(), true);
+    if (!key.IsValid()) {
+        return MLDSA65NativeBackendSignResult::REJECTED;
+    }
+
+    const uint256 digest(std::span<const unsigned char>(prehashed_sighash32.data(), prehashed_sighash32.size()));
+    std::vector<unsigned char> der_sig;
+    if (!key.Sign(digest, der_sig) || der_sig.empty()) {
+        return MLDSA65NativeBackendSignResult::UNAVAILABLE;
+    }
+
+    out_wrapped_sig = std::move(der_sig);
+    out_wrapped_sig.push_back(sighash_type);
+    return MLDSA65NativeBackendSignResult::SIGNED;
+}
+#endif
+
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_VERIFY)
 
 MLDSA65BackendAdapterResult VerifyMLDSA65BuiltinSecp256k1Backend(const std::vector<unsigned char>& wrapped_sig,
                                                                  const std::vector<unsigned char>& vchPubKey,
@@ -150,6 +182,8 @@ MLDSA65BackendAdapterResult VerifyMLDSA65BuiltinSecp256k1Backend(const std::vect
 }
 #endif
 
+#endif
+
 } // namespace
 
 MLDSA65NativeBackendBinding GetDefaultMLDSA65NativeBackendBinding()
@@ -158,8 +192,15 @@ MLDSA65NativeBackendBinding GetDefaultMLDSA65NativeBackendBinding()
         return g_mldsa65_native_default_binding_factory();
     }
 
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_VERIFY) || defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_SIGN)
+    MLDSA65NativeBackendBinding binding{BuiltinSecp256k1BackendAvailable, nullptr};
 #if defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_VERIFY)
-    return {BuiltinSecp256k1BackendAvailable, VerifyMLDSA65BuiltinSecp256k1Backend};
+    binding.verify = VerifyMLDSA65BuiltinSecp256k1Backend;
+#endif
+#if defined(ENABLE_MLDSA65_NATIVE_BACKEND_SECP256K1_SIGN)
+    binding.sign = SignMLDSA65BuiltinSecp256k1Backend;
+#endif
+    return binding;
 #endif
 
     if (MLDSA65ExternalBackendScaffoldEnabled() && MLDSA65ExternalBackendHeaderDetected()) {
