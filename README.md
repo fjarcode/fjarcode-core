@@ -244,6 +244,7 @@ Notes:
 - Code Quantum addresses are available via the quantum CashAddr destination type in wallet and RPC flows.
 - In this update, Code Quantum is the default address type returned by `getnewaddress`.
 - ML-DSA-65 is active in the runtime active algorithm set in the current release.
+- Wallet signing state reported by getcodequantuminfo (`disabled`, `verify_only`, `enabled`) is a separate capability status and does not change consensus/runtime algorithm activation.
 - The native provider runtime path for ML-DSA-65 is integrated through backend/provider interfaces with deterministic fallback behavior.
 - The ML-DSA integration targets the NIST standard track defined in FIPS 204.
 - Contract tests freeze callback order, provider registration precedence, and cleanup/reset semantics to protect integration behavior across releases.
