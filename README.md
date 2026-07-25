@@ -42,6 +42,7 @@ FJARCODE also includes the Code Quantum address/runtime path, including ML-DSA-6
 | Address Format | CashAddr (fjarcode:q...) |
 | Code Quantum | CashAddr quantum type and runtime/provider integration |
 | ML-DSA-65 | Active in the runtime algorithm set; native provider pathway and contract-tested dispatch flow (NIST FIPS 204 aligned) |
+| ZMQ Notifications | Enabled by default in release builds |
 | SegWit | Disabled |
 | Coin Symbol | FJAR |
 
