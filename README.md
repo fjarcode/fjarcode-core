@@ -107,7 +107,7 @@ On macOS hosts with Apple toolchains and Qt available, app outputs are generated
 
 ---
 
-## Hosted Artifacts (v30.0.3)
+## Hosted Artifacts (v30.0.4)
 
 Download path:
 
@@ -115,28 +115,28 @@ Download path:
 
 Windows:
 
-- `fjarcode-v30.0.3-win64.exe`
-- `fjarcoded-v30.0.3-win64.exe`
-- `fjarcode-cli-v30.0.3-win64.exe`
-- `fjarcode-qt-v30.0.3-win64.exe`
-- `fjarcode-qt-v30.0.3-win64.zip`
-- `fjarcode-v30.0.3-windows-win64-artifacts.zip`
+- `fjarcode-v30.0.4-win64.exe`
+- `fjarcoded-v30.0.4-win64.exe`
+- `fjarcode-cli-v30.0.4-win64.exe`
+- `fjarcode-qt-v30.0.4-win64.exe`
+- `fjarcode-qt-v30.0.4-win64.zip`
+- `fjarcode-v30.0.4-windows-win64-artifacts.zip`
 
 Linux:
 
-- `fjarcode-v30.0.3-linux-x86_64`
-- `fjarcoded-v30.0.3-linux-x86_64`
-- `fjarcode-cli-v30.0.3-linux-x86_64`
-- `fjarcode-qt-v30.0.3-linux-x86_64`
-- `fjarcode-v30.0.3-linux-x86_64-artifacts.tar.gz`
+- `fjarcode-v30.0.4-linux-x86_64`
+- `fjarcoded-v30.0.4-linux-x86_64`
+- `fjarcode-cli-v30.0.4-linux-x86_64`
+- `fjarcode-qt-v30.0.4-linux-x86_64`
+- `fjarcode-v30.0.4-linux-x86_64-artifacts.tar.gz`
 
 Debian:
 
-- `fjarcode-qt-v30.0.3-linux-amd64.deb`
+- `fjarcode-qt-v30.0.4-linux-amd64.deb`
 
 Source:
 
-- `fjarcode-core-source-v30.0.3-20260723-r1-fullsrc.tar.gz`
+- `fjarcode-core-source-v30.0.4-20260815-r1-fullsrc.tar.gz`
 
 Checksums:
 

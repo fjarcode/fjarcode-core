@@ -4151,11 +4151,28 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
     return true;
 }
 
+static bool ExpectWitnessCommitmentForBlock(const CBlockIndex* pindexPrev, const ChainstateManager& chainman)
+{
+    if (pindexPrev == nullptr) {
+        return false;
+    }
+
+    const Consensus::Params& consensusparams = chainman.GetConsensus();
+    const int nHeight = pindexPrev->nHeight + 1;
+
+    if (consensusparams.FJARCODEActivationHeight != Consensus::NEVER_ACTIVE_HEIGHT &&
+        nHeight >= consensusparams.FJARCODEActivationHeight) {
+        return true;
+    }
+
+    return DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_SEGWIT);
+}
+
 void ChainstateManager::UpdateUncommittedBlockStructures(CBlock& block, const CBlockIndex* pindexPrev) const
 {
     int commitpos = GetWitnessCommitmentIndex(block);
     static const std::vector<unsigned char> nonce(32, 0x00);
-    if (commitpos != NO_WITNESS_COMMITMENT && DeploymentActiveAfter(pindexPrev, *this, Consensus::DEPLOYMENT_SEGWIT) && !block.vtx[0]->HasWitness()) {
+    if (commitpos != NO_WITNESS_COMMITMENT && ExpectWitnessCommitmentForBlock(pindexPrev, *this) && !block.vtx[0]->HasWitness()) {
         CMutableTransaction tx(*block.vtx[0]);
         tx.vin[0].scriptWitness.stack.resize(1);
         tx.vin[0].scriptWitness.stack[0] = nonce;
@@ -4346,7 +4363,7 @@ static bool ContextualCheckBlock(const CBlock& block, BlockValidationState& stat
     // * There must be at least one output whose scriptPubKey is a single 36-byte push, the first 4 bytes of which are
     //   {0xaa, 0x21, 0xa9, 0xed}, and the following 32 bytes are SHA256^2(witness root, witness reserved value). In case there are
     //   multiple, the last one is used.
-    if (!CheckWitnessMalleation(block, DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_SEGWIT), state)) {
+    if (!CheckWitnessMalleation(block, ExpectWitnessCommitmentForBlock(pindexPrev, chainman), state)) {
         return false;
     }
 
