@@ -4036,7 +4036,7 @@ static bool CheckMerkleRoot(const CBlock& block, BlockValidationState& state)
  * Note: If the witness commitment is expected (i.e. `expect_witness_commitment
  * = true`), then the block is required to have at least one transaction and the
  * first transaction needs to have at least one input. */
-static bool CheckWitnessMalleation(const CBlock& block, bool expect_witness_commitment, BlockValidationState& state)
+static bool CheckWitnessMalleation(const CBlock& block, bool expect_witness_commitment, bool enforce_no_witness_when_uncommitted, BlockValidationState& state)
 {
     if (expect_witness_commitment) {
         if (block.m_checked_witness_commitment) return true;
@@ -4071,13 +4071,15 @@ static bool CheckWitnessMalleation(const CBlock& block, bool expect_witness_comm
         }
     }
 
-    // No witness data is allowed in blocks that don't commit to witness data, as this would otherwise leave room for spam
-    for (const auto& tx : block.vtx) {
-        if (tx->HasWitness()) {
-            return state.Invalid(
-                /*result=*/BlockValidationResult::BLOCK_MUTATED,
-                /*reject_reason=*/"unexpected-witness",
-                /*debug_message=*/strprintf("%s : unexpected witness data found", __func__));
+    if (enforce_no_witness_when_uncommitted) {
+        // No witness data is allowed in blocks that don't commit to witness data, as this would otherwise leave room for spam.
+        for (const auto& tx : block.vtx) {
+            if (tx->HasWitness()) {
+                return state.Invalid(
+                    /*result=*/BlockValidationResult::BLOCK_MUTATED,
+                    /*reject_reason=*/"unexpected-witness",
+                    /*debug_message=*/strprintf("%s : unexpected witness data found", __func__));
+            }
         }
     }
 
@@ -4151,28 +4153,40 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
     return true;
 }
 
-static bool ExpectWitnessCommitmentForBlock(const CBlockIndex* pindexPrev, const ChainstateManager& chainman)
+static bool ExpectWitnessCommitmentForBlock(const CBlock& block, const CBlockIndex* pindexPrev, const ChainstateManager& chainman)
 {
+    (void)block;
     if (pindexPrev == nullptr) {
         return false;
     }
 
-    const Consensus::Params& consensusparams = chainman.GetConsensus();
-    const int nHeight = pindexPrev->nHeight + 1;
+    return DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_SEGWIT);
+}
 
-    if (consensusparams.FJARCODEActivationHeight != Consensus::NEVER_ACTIVE_HEIGHT &&
-        nHeight >= consensusparams.FJARCODEActivationHeight) {
+static bool EnforceNoWitnessWhenUncommitted(const CBlockIndex* pindexPrev, const ChainstateManager& chainman)
+{
+    if (pindexPrev == nullptr) {
         return true;
     }
 
-    return DeploymentActiveAfter(pindexPrev, chainman, Consensus::DEPLOYMENT_SEGWIT);
+    const Consensus::Params& consensusParams{chainman.GetConsensus()};
+    const bool fjar_active = consensusParams.FJARCODEActivationHeight != Consensus::NEVER_ACTIVE_HEIGHT &&
+                             (pindexPrev->nHeight + 1) >= consensusParams.FJARCODEActivationHeight;
+
+    if (fjar_active && consensusParams.SegwitHeight == Consensus::NEVER_ACTIVE_HEIGHT) {
+        // FJAR compatibility mode: do not reject blocks only because they carry
+        // witness serialization while SegWit consensus itself is disabled.
+        return false;
+    }
+
+    return true;
 }
 
 void ChainstateManager::UpdateUncommittedBlockStructures(CBlock& block, const CBlockIndex* pindexPrev) const
 {
     int commitpos = GetWitnessCommitmentIndex(block);
     static const std::vector<unsigned char> nonce(32, 0x00);
-    if (commitpos != NO_WITNESS_COMMITMENT && ExpectWitnessCommitmentForBlock(pindexPrev, *this) && !block.vtx[0]->HasWitness()) {
+    if (commitpos != NO_WITNESS_COMMITMENT && ExpectWitnessCommitmentForBlock(block, pindexPrev, *this) && !block.vtx[0]->HasWitness()) {
         CMutableTransaction tx(*block.vtx[0]);
         tx.vin[0].scriptWitness.stack.resize(1);
         tx.vin[0].scriptWitness.stack[0] = nonce;
@@ -4236,7 +4250,7 @@ bool IsBlockMutated(const CBlock& block, bool check_witness_root)
         // here as it requires at least 224 bits of work.
     }
 
-    if (!CheckWitnessMalleation(block, check_witness_root, state)) {
+    if (!CheckWitnessMalleation(block, check_witness_root, /*enforce_no_witness_when_uncommitted=*/true, state)) {
         LogDebug(BCLog::VALIDATION, "Block mutated: %s\n", state.ToString());
         return true;
     }
@@ -4363,7 +4377,10 @@ static bool ContextualCheckBlock(const CBlock& block, BlockValidationState& stat
     // * There must be at least one output whose scriptPubKey is a single 36-byte push, the first 4 bytes of which are
     //   {0xaa, 0x21, 0xa9, 0xed}, and the following 32 bytes are SHA256^2(witness root, witness reserved value). In case there are
     //   multiple, the last one is used.
-    if (!CheckWitnessMalleation(block, ExpectWitnessCommitmentForBlock(pindexPrev, chainman), state)) {
+    if (!CheckWitnessMalleation(block,
+                                ExpectWitnessCommitmentForBlock(block, pindexPrev, chainman),
+                                EnforceNoWitnessWhenUncommitted(pindexPrev, chainman),
+                                state)) {
         return false;
     }
 
